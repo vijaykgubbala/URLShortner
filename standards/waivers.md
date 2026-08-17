@@ -37,7 +37,7 @@ Every waiver carries all six fields. A record missing any one of them is invalid
 ## Template
 
 ```markdown
-### WVR-001 — <short title>
+### WVR-nnn — <short title>
 
 - **Rule ID:** STD-SEC-05
 - **Scope:** src/Redirect/LegacyLinkHandler.cs, endpoint /v1/legacy-links/{code}
@@ -47,11 +47,24 @@ Every waiver carries all six fields. A record missing any one of them is invalid
 - **Follow-up issue:** #42
 ```
 
+> The heading above is `WVR-nnn` deliberately. An earlier version of this template used `WVR-001`, which collided with the first real waiver the moment one was written — two records under one ID, which is the failure the identifier scheme exists to prevent.
+
 ---
 
 ## Active waivers
 
-_None._
+### WVR-001 — Redirect path validates scheme only, not resolved addresses
+
+- **Rule ID:** `STD-SEC-05` — *"A user-supplied or stored destination URL must be validated against an allowlist of permitted schemes and hosts immediately before issuing a redirect or server-side request."*
+- **Scope:** The redirect path only — `DestinationPolicy.CheckScheme`, and the resolution endpoint that will call it in #19. The creation path is **not** waived: it performs the full check including resolved addresses.
+- **Rationale:** The full check requires a DNS lookup, and #19's acceptance criteria hold the redirect path to 50 ms at p99 under 100 rps. Resolving on every redirect cannot meet that without a cache whose invalidation is itself unbuilt. The service never fetches the destination server-side — it emits a `Location` header and the visitor's own browser makes the request — so the SSRF half of `STD-SEC-05`'s rationale does not apply. **The phishing half does**, and this waiver accepts that residual exposure: a host that resolved publicly at creation and later resolves privately will still be redirected to.
+- **Approver:** ReposVijay
+- **Expiry:** 2026-11-17
+- **Follow-up issue:** #19 — the redirect path re-check, to be implemented with a cached policy verdict and a bounded TTL, or this waiver renewed with a fresh decision.
+
+**Raised by:** `review-security` finding SEC-001 during `/workflow-review 17`. The agent was correct that the accepted-residual-risk note in `docs/plans/2026-08-17-17-feature-destination-url-policy-plan.md` was **not** a waiver and did not satisfy this rule. This record is what makes the deviation reviewable and time-bounded rather than a permanent quiet exception.
+
+**Consequence for SEC-005:** the DNS-rebinding threat named in the brainstorm and plan has no negative test, and cannot have one while this waiver stands — there is no second check to fail closed. That gap expires with this waiver.
 
 Every waiver ever granted stays in this file after it expires, moved to the section below. Deleting the record deletes the evidence that the decision was made.
 
