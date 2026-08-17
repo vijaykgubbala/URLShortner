@@ -66,10 +66,27 @@ Every waiver carries all six fields. A record missing any one of them is invalid
 
 **Consequence for SEC-005:** the DNS-rebinding threat named in the brainstorm and plan has no negative test, and cannot have one while this waiver stands — there is no second check to fail closed. That gap expires with this waiver.
 
-Every waiver ever granted stays in this file after it expires, moved to the section below. Deleting the record deletes the evidence that the decision was made.
+---
+
+### WVR-002 — Criterion 3 waived for #17, which contributes to REQ-002 rather than delivering it
+
+- **Rule ID:** `/gate-check` blocking criterion 3 — *"Any requirement the issue traces to that has no test coverage at all."*
+- **Scope:** **Issue #17 only.** Not a class, not a category, not "component issues" generally. The next issue that hits this needs its own waiver, or #43 lands and no waiver is needed.
+- **Rationale:** #17 traces to REQ-002 — *"The service shall resolve a short code to its destination URL and redirect the caller to it"* — and no test asserts it, because #17 does not build it. Its Out of Scope reads *"The create and redirect endpoints themselves — this issue delivers the policy they call."* #19 delivers REQ-002 and will carry its tests. The criterion assumes an issue delivers the requirements it traces to; the solution plan decomposes them across issues. Blocking here would mean no component issue can ever pass a gate.
+- **Approver:** ReposVijay
+- **Expiry:** 2026-10-17
+- **Follow-up issue:** #43 — amend criterion 3 so it fits component issues, after which this waiver is unnecessary.
+
+**Why this is scoped to one issue and not to a class.** A waiver reading "criterion 3 does not apply to component issues" would remove the criterion: almost every issue in this plan is a component issue, and a rule that never fires is worse than no rule because the pack still looks complete. The register's own words — *"A waiver with unbounded scope is a repeal"* — apply to a criterion as much as to a standard.
+
+**The expiry is two months, shorter than WVR-001's three.** This waiver exists because a criterion is arguably wrong, and the fix is #43 rather than renewal. A long expiry would remove the pressure to write it.
+
+**What is not waived.** REQ-002 still has no test anywhere in the repository. This waiver says #17 is not the issue that owes one; it does not say the requirement is covered. `traceability/rtm.md` still shows REQ-002 mapped to #17 and #19, and #19 is where the debt sits.
 
 ---
 
 ## Expired waivers
+
+**Every waiver ever granted stays in this file after it expires**, moved to this section rather than deleted. Deleting the record deletes the evidence that the decision was made.
 
 _None._
