@@ -164,8 +164,8 @@ The pre-flight at `/workflow-execute` Step 3.5 described the **project layout** 
 
 - [x] **1.** Write **ADR-001** in `decisions/` — the DNS resolver port: where the interface is declared, whether it is asynchronous, whether it takes a cancellation token, and the timeout policy. Required by `STD-ARCH-06`, and it fills the gap the advisor reported. Must be accepted before Step 13.
 - [x] **2.** Scaffold `src/UrlShortener.Domain`, `src/UrlShortener.Application`, `src/UrlShortener.Infrastructure`, `src/UrlShortener.Api` and the matching test projects under `tests/`. References per `layers.md` §2.1 — Domain references nothing; Application references Domain; Infrastructure references Application and Domain; Api references Application and Domain. Per §2.2, only the composition root in `UrlShortener.Api` references Infrastructure.
-- [ ] **3.** Write T-13, T-14 — parse failures. Run. Confirm they fail.
-- [ ] **4.** Implement URL parsing and the parse-failure reason. *(satisfies T-13, T-14)*
+- [x] **3.** Write T-13, T-14 — parse failures. Run. Confirm they fail.
+- [x] **4.** Implement URL parsing and the parse-failure reason. *(satisfies T-13, T-14)*
 - [ ] **5.** Write T-01, T-02, T-03 — scheme rules. Run. Confirm they fail.
 - [ ] **6.** Implement the scheme allowlist in the Domain predicate. *(satisfies T-01, T-02, T-03)*
 - [ ] **7.** Write T-12 — the two-state verdict. Run. Confirm it fails.
