@@ -103,14 +103,25 @@ public static class DestinationPolicy
 
         return b[0] switch
         {
-            0 => false,                                   // 0.0.0.0/8  unspecified
-            10 => false,                                  // 10.0.0.0/8 private
-            127 => false,                                 // 127.0.0.0/8 loopback
-            100 when b[1] is >= 64 and <= 127 => false,   // 100.64.0.0/10 carrier-grade NAT
-            169 when b[1] == 254 => false,                // 169.254.0.0/16 link-local
-            172 when b[1] is >= 16 and <= 31 => false,    // 172.16.0.0/12 private
-            192 when b[1] == 168 => false,                // 192.168.0.0/16 private
-            255 => false,                                 // 255.0.0.0/8 reserved, broadcast
+            0 => false,                                     // 0.0.0.0/8   unspecified
+            10 => false,                                    // 10.0.0.0/8  private
+            127 => false,                                   // 127.0.0.0/8 loopback
+            100 when b[1] is >= 64 and <= 127 => false,     // 100.64.0.0/10 carrier-grade NAT
+            169 when b[1] == 254 => false,                  // 169.254.0.0/16 link-local
+            172 when b[1] is >= 16 and <= 31 => false,      // 172.16.0.0/12 private
+            192 when b[1] == 168 => false,                  // 192.168.0.0/16 private
+            192 when b[1] == 0 && b[2] is 0 or 2 => false,  // 192.0.0.0/24 IETF, 192.0.2.0/24 TEST-NET-1
+            198 when b[1] is 18 or 19 => false,             // 198.18.0.0/15 benchmark
+            198 when b[1] == 51 && b[2] == 100 => false,    // 198.51.100.0/24 TEST-NET-2
+            203 when b[1] == 0 && b[2] == 113 => false,     // 203.0.113.0/24 TEST-NET-3
+
+            // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved for future use, and the
+            // broadcast address. Expressed as a range rather than as named octets: the
+            // first version of this method enumerated four examples of "reserved" and
+            // left the category open, which is how 224, 239, 240, 198 and 203 stayed
+            // permitted while every test agreed with the code.
+            >= 224 => false,
+
             _ => true
         };
     }

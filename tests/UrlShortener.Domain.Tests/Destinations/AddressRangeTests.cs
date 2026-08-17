@@ -55,6 +55,48 @@ public class AddressRangeTests
         Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
     }
 
+    /// <summary>
+    /// GATE-17 F-1. AC-3 says "loopback, link-local, private or <b>reserved</b>". The
+    /// switch implemented four named examples of "reserved" and left the category open,
+    /// so these were permitted while 119 tests agreed with the code — because no test
+    /// asserted the criterion. The IPv6 equivalent was fixed a commit earlier; this is
+    /// the half that fell between the handover that named it and a review told to skip it.
+    /// </summary>
+    [Theory]
+    [InlineData("224.0.0.1")]        // all-systems multicast
+    [InlineData("239.255.255.250")]  // SSDP — local network discovery
+    [InlineData("232.1.1.1")]        // source-specific multicast
+    [InlineData("240.0.0.1")]        // reserved for future use
+    [InlineData("254.1.2.3")]        // reserved 240/4, below the broadcast address
+    [InlineData("198.18.0.1")]       // benchmark 198.18/15
+    [InlineData("198.19.255.255")]   // benchmark, upper bound
+    [InlineData("192.0.0.1")]        // IETF protocol assignments
+    [InlineData("192.0.2.1")]        // TEST-NET-1
+    [InlineData("198.51.100.1")]     // TEST-NET-2
+    [InlineData("203.0.113.1")]      // TEST-NET-3
+    public void Ipv4_reserved_ranges_are_refused(string address)
+    {
+        Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
+    }
+
+    /// <summary>
+    /// The counterpart. Each of these sits immediately outside a range refused above, so
+    /// a mask written one bit too wide fails here while still passing every refusal row.
+    /// </summary>
+    [Theory]
+    [InlineData("223.255.255.255")]  // just below multicast 224/4
+    [InlineData("198.17.255.255")]   // just below benchmark 198.18/15
+    [InlineData("198.20.0.1")]       // just above benchmark 198.18/15
+    [InlineData("192.0.1.1")]        // between 192.0.0/24 and TEST-NET-1
+    [InlineData("192.0.3.1")]        // just above TEST-NET-1
+    [InlineData("198.51.101.1")]     // just above TEST-NET-2
+    [InlineData("203.0.114.1")]      // just above TEST-NET-3
+    [InlineData("93.184.216.34")]    // ordinary public address
+    public void Ipv4_addresses_adjacent_to_the_reserved_ranges_are_permitted(string address)
+    {
+        Assert.Equal(DestinationRejection.None, Check(address).Rejection);
+    }
+
     // T-07 — IPv6 loopback, link-local, site-local, unique-local
     [Theory]
     [InlineData("::1")]
