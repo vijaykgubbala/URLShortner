@@ -79,7 +79,7 @@ public class RejectionTelemetryTests
 
         await sut.ExecuteAsync("https://internal.example", CancellationToken.None);
 
-        Assert.Single(logger.Events.Where(e => e == "link.destination.rejected"));
+        Assert.Single(logger.Events, e => e == "link.destination.rejected");
         Assert.Equal(1, counter.Total);
     }
 

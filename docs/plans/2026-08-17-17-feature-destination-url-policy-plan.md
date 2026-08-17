@@ -29,12 +29,12 @@ Delivers the policy that decides whether a destination URL may be stored and red
 
 Copied verbatim from #17.
 
-- [ ] Given a destination URL with scheme `http` or `https`, when it is validated, then it is accepted.
-- [ ] Given a destination URL with any other scheme, when it is validated, then it is rejected with `422` and the response names the failing rule.
-- [ ] Given a destination URL resolving to a loopback, link-local, private or reserved address range, when it is validated, then it is rejected with `422`.
-- [ ] Given a value that cannot be parsed as an absolute URL, when it is validated, then it is rejected with `400` naming the offending field.
-- [ ] Given a rejected destination, when the rejection occurs, then a structured log event `link.destination.rejected` is emitted and the `link_destination_rejections` counter increments.
-- [ ] Given the validator, when the test suite runs, then a negative test asserts each rejection case fails closed, including a DNS resolution failure.
+- [x] Given a destination URL with scheme `http` or `https`, when it is validated, then it is accepted.
+- [x] Given a destination URL with any other scheme, when it is validated, then it is rejected with `422` and the response names the failing rule.
+- [x] Given a destination URL resolving to a loopback, link-local, private or reserved address range, when it is validated, then it is rejected with `422`.
+- [x] Given a value that cannot be parsed as an absolute URL, when it is validated, then it is rejected with `400` naming the offending field.
+- [x] Given a rejected destination, when the rejection occurs, then a structured log event `link.destination.rejected` is emitted and the `link_destination_rejections` counter increments.
+- [x] Given the validator, when the test suite runs, then a negative test asserts each rejection case fails closed, including a DNS resolution failure.
 
 ---
 
@@ -180,7 +180,7 @@ The pre-flight at `/workflow-execute` Step 3.5 described the **project layout** 
 - [x] **16.** Implement the translation in two hops per §5.2 and §5.3: the Application handler converts the Domain verdict into an **Application-declared result type**, then Entrypoints maps that result to a published kebab-case `type`, `422` for policy and `400` for parse, field failures collected together, `traceId` on every response. *(satisfies T-19 … T-23)*
 - [x] **17.** Write T-24, T-25 — log event, counter, and address-in-log-not-response. Run. Confirm they fail.
 - [x] **18.** Implement the structured log event and the counter. *(satisfies T-24, T-25)*
-- [ ] **19.** Run the full suite, lint and format. Verify every AC has a passing test asserting it.
+- [x] **19.** Run the full suite, lint and format. Verify every AC has a passing test asserting it.
 
 ---
 
