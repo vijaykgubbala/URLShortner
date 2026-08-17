@@ -33,25 +33,33 @@ public sealed record FullVerdict(DestinationRejection Rejection)
 /// </summary>
 public static class DestinationPolicy
 {
-    public static SchemeVerdict CheckScheme(string? rawUrl)
+    public static SchemeVerdict CheckScheme(string? rawUrl) => new(RejectionFor(rawUrl, out _));
+
+    /// <summary>
+    /// Order matters. A scheme is judged before a host is required, because
+    /// "javascript:alert(1)" is a well-formed absolute URI with no host: refusing it as
+    /// unparseable would report a 400 where the policy means 422.
+    /// </summary>
+    private static DestinationRejection RejectionFor(string? rawUrl, out Uri? uri)
     {
-        if (!TryParseAbsolute(rawUrl, out _))
+        uri = null;
+
+        if (string.IsNullOrWhiteSpace(rawUrl) || !Uri.TryCreate(rawUrl, UriKind.Absolute, out uri))
         {
-            return new SchemeVerdict(DestinationRejection.NotAbsoluteUrl);
+            return DestinationRejection.NotAbsoluteUrl;
         }
 
-        return new SchemeVerdict(DestinationRejection.None);
-    }
-
-    private static bool TryParseAbsolute(string? rawUrl, out Uri uri)
-    {
-        uri = null!;
-
-        if (string.IsNullOrWhiteSpace(rawUrl))
+        if (!IsPermittedScheme(uri.Scheme))
         {
-            return false;
+            return DestinationRejection.SchemeNotPermitted;
         }
 
-        return Uri.TryCreate(rawUrl, UriKind.Absolute, out uri!) && !string.IsNullOrEmpty(uri.Host);
+        return string.IsNullOrEmpty(uri.Host)
+            ? DestinationRejection.NotAbsoluteUrl
+            : DestinationRejection.None;
     }
+
+    private static bool IsPermittedScheme(string scheme) =>
+        scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+        || scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 }
