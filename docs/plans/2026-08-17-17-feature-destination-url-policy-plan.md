@@ -170,8 +170,8 @@ The pre-flight at `/workflow-execute` Step 3.5 described the **project layout** 
 - [x] **6.** Implement the scheme allowlist in the Domain predicate. *(satisfies T-01, T-02, T-03)*
 - [x] **7.** Write T-12 — the two-state verdict. Run. Confirm it fails.
 - [x] **8.** Implement the verdict type as two distinct states. *(satisfies T-12)*
-- [ ] **9.** Write T-04 … T-09 — address ranges across both families, and the multi-address rule. Run. Confirm they fail.
-- [ ] **10.** Implement the address-range rules in the Domain predicate. *(satisfies T-04 … T-09)*
+- [x] **9.** Write T-04 … T-09 — address ranges across both families, and the multi-address rule. Run. Confirm they fail.
+- [x] **10.** Implement the address-range rules in the Domain predicate. *(satisfies T-04 … T-09)*
 - [ ] **11.** Write T-10, T-11, T-16 — resolution outcomes fail closed, and the orchestration decides nothing. Run. Confirm they fail.
 - [ ] **12.** Implement the resolution outcome type **in Domain** (§2.1), outcome handling in the Domain predicate, and the Application orchestration that passes it through untouched. *(satisfies T-10, T-11, T-16)*
 - [ ] **13.** Write T-15, T-17, T-18 — passthrough, unfiltered results, explicit timeout. Run. Confirm they fail.

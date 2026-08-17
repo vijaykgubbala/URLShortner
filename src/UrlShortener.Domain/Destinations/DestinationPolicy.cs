@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+
 namespace UrlShortener.Domain.Destinations;
 
 /// <summary>Why a destination was refused. <see cref="None"/> means permitted.</summary>
@@ -47,9 +50,78 @@ public static class DestinationPolicy
     {
         var schemeRejection = RejectionFor(rawUrl, out _);
 
-        return schemeRejection != DestinationRejection.None
-            ? new FullVerdict(schemeRejection)
-            : new FullVerdict(DestinationRejection.None);
+        if (schemeRejection != DestinationRejection.None)
+        {
+            return new FullVerdict(schemeRejection);
+        }
+
+        return resolution switch
+        {
+            HostResolution.Resolved resolved => new FullVerdict(JudgeAddresses(resolved.Addresses)),
+
+            // T-10 and T-11 give these arms their behaviour in the next step. Throwing
+            // rather than permitting keeps the gap loud: an unhandled resolution outcome
+            // must never read as "permitted" in a control that prevents open redirect.
+            _ => throw new NotImplementedException(
+                $"No rule yet for resolution outcome {resolution.GetType().Name}")
+        };
+    }
+
+    private static DestinationRejection JudgeAddresses(IReadOnlyList<IPAddress> addresses) =>
+        // Any single disallowed address refuses the destination. Our resolver and the
+        // visitor's may pick differently from the same set, so requiring all of them to be
+        // disallowed would fail open on exactly the case that matters.
+        addresses.All(IsPermittedAddress)
+            ? DestinationRejection.None
+            : DestinationRejection.AddressNotPermitted;
+
+    private static bool IsPermittedAddress(IPAddress address)
+    {
+        // Judge a mapped address on what it maps to. Otherwise ::ffff:127.0.0.1 reaches
+        // loopback on any dual-stack host, and the control is bypassed by writing the
+        // same address a different way.
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        return address.AddressFamily == AddressFamily.InterNetwork
+            ? IsPermittedV4(address)
+            : IsPermittedV6(address);
+    }
+
+    private static bool IsPermittedV4(IPAddress address)
+    {
+        var b = address.GetAddressBytes();
+
+        return b[0] switch
+        {
+            0 => false,                                   // 0.0.0.0/8  unspecified
+            10 => false,                                  // 10.0.0.0/8 private
+            127 => false,                                 // 127.0.0.0/8 loopback
+            100 when b[1] is >= 64 and <= 127 => false,   // 100.64.0.0/10 carrier-grade NAT
+            169 when b[1] == 254 => false,                // 169.254.0.0/16 link-local
+            172 when b[1] is >= 16 and <= 31 => false,    // 172.16.0.0/12 private
+            192 when b[1] == 168 => false,                // 192.168.0.0/16 private
+            255 => false,                                 // 255.0.0.0/8 reserved, broadcast
+            _ => true
+        };
+    }
+
+    private static bool IsPermittedV6(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.IPv6Any))
+        {
+            return false;                                 // ::1 and ::
+        }
+
+        if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal)
+        {
+            return false;                                 // fe80::/10 and the deprecated fec0::/10
+        }
+
+        // fc00::/7 unique-local
+        return (address.GetAddressBytes()[0] & 0xFE) != 0xFC;
     }
 
     /// <summary>
