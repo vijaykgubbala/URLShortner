@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using UrlShortener.Domain.Destinations;
 
 namespace UrlShortener.Application.Destinations;
@@ -36,8 +37,13 @@ public sealed record DestinationValidationResult(bool IsPermitted, DestinationRe
 /// not business rules." What a failed resolution means is a rule about a permitted
 /// destination, so this passes the outcome through untouched and lets Domain judge it.
 /// </summary>
-public sealed class ValidateDestination(IHostResolver resolver)
+public sealed class ValidateDestination(
+    IHostResolver resolver,
+    ILogger<ValidateDestination>? logger = null,
+    RejectionCounter? counter = null)
 {
+    private static readonly EventId Rejected = new(1000, "link.destination.rejected");
+
     public async Task<DestinationValidationResult> ExecuteAsync(
         string? rawUrl,
         CancellationToken cancellationToken)
@@ -48,7 +54,7 @@ public sealed class ValidateDestination(IHostResolver resolver)
 
         if (!schemeVerdict.IsPermitted)
         {
-            return Translate(schemeVerdict.Rejection);
+            return Record(Translate(schemeVerdict.Rejection), rawUrl, resolution: null);
         }
 
         var host = new Uri(rawUrl!).Host;
@@ -56,7 +62,45 @@ public sealed class ValidateDestination(IHostResolver resolver)
 
         // The outcome goes straight to Domain. No branch on it here — that is the flag
         // architecture-advisor raised against an earlier shape of this method.
-        return Translate(DestinationPolicy.CheckFully(rawUrl, resolution).Rejection);
+        var verdict = DestinationPolicy.CheckFully(rawUrl, resolution);
+
+        return Record(Translate(verdict.Rejection), rawUrl, resolution);
+    }
+
+    /// <summary>
+    /// Emits one event and one increment per refusal — not one per rule evaluated. Three
+    /// disallowed addresses in one answer is one refused destination, and counting it
+    /// three times would make a single probe look like three.
+    ///
+    /// The resolved addresses are logged here and nowhere else. <c>api.md §4.3</c> keeps
+    /// them out of the response body; this is the only place an operator can see which
+    /// address caused the refusal, correlated by the trace identifier on the response.
+    /// </summary>
+    private DestinationValidationResult Record(
+        DestinationValidationResult result,
+        string? rawUrl,
+        HostResolution? resolution)
+    {
+        if (result.IsPermitted)
+        {
+            return result;
+        }
+
+        counter?.Increment(result.Refusal);
+
+        var addresses = resolution is HostResolution.Resolved resolved
+            ? string.Join(", ", resolved.Addresses)
+            : "(not resolved)";
+
+        logger?.Log(
+            LogLevel.Warning,
+            Rejected,
+            "Destination refused. Reason: {Reason}. Host: {Host}. Addresses: {Addresses}.",
+            null,
+            (state, _) => $"Destination refused. Reason: {result.Refusal}. " +
+                          $"Url: {rawUrl}. Addresses: {addresses}.");
+
+        return result;
     }
 
     private static DestinationValidationResult Translate(DestinationRejection rejection) =>
