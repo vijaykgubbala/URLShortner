@@ -174,8 +174,8 @@ The pre-flight at `/workflow-execute` Step 3.5 described the **project layout** 
 - [x] **10.** Implement the address-range rules in the Domain predicate. *(satisfies T-04 … T-09)*
 - [x] **11.** Write T-10, T-11, T-16 — resolution outcomes fail closed, and the orchestration decides nothing. Run. Confirm they fail.
 - [x] **12.** Implement the resolution outcome type **in Domain** (§2.1), outcome handling in the Domain predicate, and the Application orchestration that passes it through untouched. *(satisfies T-10, T-11, T-16)*
-- [ ] **13.** Write T-15, T-17, T-18 — passthrough, unfiltered results, explicit timeout. Run. Confirm they fail.
-- [ ] **14.** Implement the Infrastructure DNS adapter per ADR-001, returning results unfiltered and unranked. *(satisfies T-15, T-17, T-18)*
+- [x] **13.** Write T-15, T-17, T-18 — passthrough, unfiltered results, explicit timeout. Run. Confirm they fail.
+- [x] **14.** Implement the Infrastructure DNS adapter per ADR-001, returning results unfiltered and unranked. *(satisfies T-15, T-17, T-18)*
 - [ ] **15.** Write T-19 … T-23 — the error contract. Run. Confirm they fail.
 - [ ] **16.** Implement the translation in two hops per §5.2 and §5.3: the Application handler converts the Domain verdict into an **Application-declared result type**, then Entrypoints maps that result to a published kebab-case `type`, `422` for policy and `400` for parse, field failures collected together, `traceId` on every response. *(satisfies T-19 … T-23)*
 - [ ] **17.** Write T-24, T-25 — log event, counter, and address-in-log-not-response. Run. Confirm they fail.
