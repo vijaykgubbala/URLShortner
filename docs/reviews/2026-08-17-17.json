@@ -47,7 +47,7 @@
       "reported_by": ["review-security"],
       "disposition": "addressed",
       "reason": "Waiver written rather than code changed. WVR-001 in standards/waivers.md, scoped to the redirect path only, approver ReposVijay, expiry 2026-11-17, follow-up #19. The agent's core point is accepted: the plan's accepted-residual-risk note was not a waiver and this rule was being deviated from without a record. The creation path is not waived.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "COR-002",
@@ -60,7 +60,7 @@
       "reported_by": ["review-correctness", "review-security", "review-testing"],
       "disposition": "addressed",
       "reason": "Three independent lenses reached the same line. Fixing.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "COR-001",
@@ -73,7 +73,7 @@
       "reported_by": ["review-correctness", "review-testing"],
       "disposition": "addressed",
       "reason": "A test that locks in a defect is worse than no test. Fixing both the mapping and the test that pinned it.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "COR-003",
@@ -86,7 +86,7 @@
       "reported_by": ["review-correctness", "review-testing"],
       "disposition": "addressed",
       "reason": "STD-OPS-04 is critical severity and this is a hang, not merely a miscount. Fixing.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "SEC-003",
@@ -99,7 +99,7 @@
       "reported_by": ["review-security"],
       "disposition": "addressed",
       "reason": "Cheap to fix and the rule is explicit about all four checks. Fixing.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "TST-001",
@@ -112,7 +112,7 @@
       "reported_by": ["review-testing"],
       "disposition": "addressed",
       "reason": "An acceptance criterion that a green suite does not protect is not proven. Fixing.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "COR-005",
@@ -190,7 +190,7 @@
       "reported_by": ["review-testing"],
       "disposition": "addressed",
       "reason": "Folded into the COR-002 fix rather than deferred — the IPv6 range work touches exactly this method and adding one theory row costs nothing while the file is open.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     },
     {
       "id": "COR-006",
@@ -268,7 +268,7 @@
       "reported_by": ["review-architecture"],
       "disposition": "addressed",
       "reason": "Folded into the remediation pass rather than deferred. It is a one-line deletion of template scaffolding, the same class as the xunit UnitTest1 stubs removed in cycle 1, and leaving a known-non-conforming route as the repository's only route invites it to be copied.",
-      "commit": "pending-remediation"
+      "commit": "63bda98"
     }
   ],
   "summary": {
