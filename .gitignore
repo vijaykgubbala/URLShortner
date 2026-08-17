@@ -1,0 +1,35 @@
+# Source requirement documents are not committed.
+#
+# The assignment PDF carries an internal classification marking, and CLAUDE.md
+# requires this repository to be self-contained with no reference to any company,
+# employer, or internal system. Committing it would contradict that rule in the
+# one place nothing downstream would catch.
+#
+# Traceability is preserved without it: requirements/baseline.md cites the source
+# by filename and section number for every REQ, and ASM-018 records this decision.
+docs/*.pdf
+
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+
+# Test and coverage output
+[Tt]est[Rr]esult*/
+coverage*
+*.trx
+
+# Local environment
+.vs/
+.idea/
+*.user
+*.suo
+appsettings.*.local.json
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
