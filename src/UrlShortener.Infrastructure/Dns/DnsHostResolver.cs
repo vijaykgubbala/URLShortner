@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using UrlShortener.Application.Destinations;
 using UrlShortener.Domain.Destinations;
 
@@ -57,7 +58,16 @@ public sealed class DnsHostResolver : IHostResolver
             // Our own timeout expired.
             return new HostResolution.Failed();
         }
-        catch (Exception ex) when (ex is System.Net.Sockets.SocketException or ArgumentException)
+        catch (SocketException ex)
+            when (ex.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData)
+        {
+            // The resolver answered: this host does not exist. It is not a failure of
+            // ours. Dns.GetHostAddressesAsync signals it by throwing rather than by
+            // returning an empty array, so without this arm NotFound is unreachable in
+            // production and every typo is reported as a transient fault worth retrying.
+            return new HostResolution.NotFound();
+        }
+        catch (Exception ex) when (ex is SocketException or ArgumentException)
         {
             // §6.3 — a lower-level exception is translated into a failure type this
             // interface declares, rather than escaping into the caller unchanged.

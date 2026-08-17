@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Net;
 using UrlShortener.Domain.Destinations;
 using UrlShortener.Infrastructure.Dns;
@@ -84,16 +85,49 @@ public class DnsHostResolverTests
     /// failure would force the caller into a catch block that decides whether to reject,
     /// and that decision is a business rule the layer model keeps in the domain.
     /// </summary>
-    [Fact]
-    public async Task A_resolver_error_is_returned_as_Failed_rather_than_thrown()
+    /// <summary>
+    /// COR-001. This test previously threw SocketException(11001) — which IS HostNotFound —
+    /// and asserted Failed, pinning the defect rather than catching it. It now uses a
+    /// genuinely transient error.
+    /// </summary>
+    [Theory]
+    [InlineData(SocketError.TryAgain)]
+    [InlineData(SocketError.NetworkDown)]
+    [InlineData(SocketError.TimedOut)]
+    public async Task A_transient_resolver_error_is_returned_as_Failed_rather_than_thrown(
+        SocketError error)
     {
-        var resolver = new DnsHostResolver(
-            Generous,
-            (_, _) => throw new System.Net.Sockets.SocketException(11001));
+        var resolver = new DnsHostResolver(Generous, (_, _) => throw new SocketException((int)error));
 
-        var outcome = await resolver.ResolveAsync("broken.example", CancellationToken.None);
+        Assert.IsType<HostResolution.Failed>(
+            await resolver.ResolveAsync("broken.example", CancellationToken.None));
+    }
 
-        Assert.IsType<HostResolution.Failed>(outcome);
+    /// <summary>
+    /// COR-001 — the defect itself. Dns.GetHostAddressesAsync THROWS HostNotFound for a
+    /// nonexistent host; it does not return an empty array. Mapping that to Failed made
+    /// NotFound unreachable in production and told every caller with a typo to retry
+    /// something that will never succeed.
+    /// </summary>
+    [Theory]
+    [InlineData(SocketError.HostNotFound)]
+    [InlineData(SocketError.NoData)]
+    public async Task A_host_that_does_not_exist_is_NotFound_not_Failed(SocketError error)
+    {
+        var resolver = new DnsHostResolver(Generous, (_, _) => throw new SocketException((int)error));
+
+        Assert.IsType<HostResolution.NotFound>(
+            await resolver.ResolveAsync("nosuchhost.example", CancellationToken.None));
+    }
+
+    /// <summary>TST-006 — the ArgumentException arm had no test.</summary>
+    [Fact]
+    public async Task A_malformed_host_is_returned_as_Failed()
+    {
+        var resolver = new DnsHostResolver(Generous, (_, _) => throw new ArgumentException("host"));
+
+        Assert.IsType<HostResolution.Failed>(
+            await resolver.ResolveAsync("", CancellationToken.None));
     }
 
     /// <summary>

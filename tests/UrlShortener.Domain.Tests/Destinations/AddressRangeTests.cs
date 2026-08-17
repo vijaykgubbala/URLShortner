@@ -55,16 +55,61 @@ public class AddressRangeTests
         Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
     }
 
-    // T-07 — IPv6 loopback, link-local, unique-local
+    // T-07 — IPv6 loopback, link-local, site-local, unique-local
     [Theory]
     [InlineData("::1")]
     [InlineData("fe80::1")]
     [InlineData("fc00::1")]
     [InlineData("fd12:3456::1")]
     [InlineData("::")]
-    public void Ipv6_loopback_link_local_and_unique_local_are_refused(string address)
+    [InlineData("fec0::1")]  // TST-007 — the deprecated site-local arm had no row
+    public void Ipv6_loopback_link_local_site_local_and_unique_local_are_refused(string address)
     {
         Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
+    }
+
+    /// <summary>
+    /// COR-002 / SEC-002 / TST-002 — AC-3's "reserved" clause on the IPv6 side.
+    /// Three review lenses reached this independently.
+    /// </summary>
+    [Theory]
+    [InlineData("ff02::1")]      // all-nodes multicast
+    [InlineData("ff05::c")]      // SSDP over IPv6
+    [InlineData("ff0e::1")]      // global-scope multicast
+    [InlineData("2001:db8::1")]  // documentation
+    [InlineData("2001::1")]      // Teredo
+    public void Ipv6_reserved_ranges_are_refused(string address)
+    {
+        Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
+    }
+
+    /// <summary>
+    /// COR-002 / SEC-002 — every encoding that embeds an IPv4 address is judged on the
+    /// address it embeds, not only the ::ffff: form. Each of these reaches a private or
+    /// loopback address by writing it a different way, which is the bypass the mapped-form
+    /// guard already existed to close — it was closed for one spelling out of four.
+    /// </summary>
+    [Theory]
+    [InlineData("::a00:1")]            // ::10.0.0.1 IPv4-compatible
+    [InlineData("::7f00:1")]           // ::127.0.0.1 IPv4-compatible
+    [InlineData("64:ff9b::a00:1")]     // NAT64 of 10.0.0.1
+    [InlineData("64:ff9b::7f00:1")]    // NAT64 of 127.0.0.1
+    [InlineData("2002:a00:1::")]       // 6to4 of 10.0.0.1
+    [InlineData("2002:7f00:1::")]      // 6to4 of 127.0.0.1
+    public void Ipv6_encodings_embedding_a_private_ipv4_address_are_refused(string address)
+    {
+        Assert.Equal(DestinationRejection.AddressNotPermitted, Check(address).Rejection);
+    }
+
+    /// <summary>
+    /// The counterpart. Without this, refusing every IPv6 address would satisfy the rows above.
+    /// </summary>
+    [Theory]
+    [InlineData("64:ff9b::5db8:d822")]  // NAT64 of a public address
+    [InlineData("2002:5db8:d822::")]    // 6to4 of a public address
+    public void Ipv6_encodings_embedding_a_public_ipv4_address_are_permitted(string address)
+    {
+        Assert.Equal(DestinationRejection.None, Check(address).Rejection);
     }
 
     /// <summary>

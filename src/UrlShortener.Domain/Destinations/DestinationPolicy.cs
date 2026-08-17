@@ -127,8 +127,65 @@ public static class DestinationPolicy
             return false;                                 // fe80::/10 and the deprecated fec0::/10
         }
 
-        // fc00::/7 unique-local
-        return (address.GetAddressBytes()[0] & 0xFE) != 0xFC;
+        if (address.IsIPv6Multicast)
+        {
+            return false;                                 // ff00::/8, incl. SSDP over IPv6
+        }
+
+        var b = address.GetAddressBytes();
+
+        if ((b[0] & 0xFE) == 0xFC)
+        {
+            return false;                                 // fc00::/7 unique-local
+        }
+
+        // Any encoding that embeds an IPv4 address is judged on the address it embeds.
+        // The mapped ::ffff: form was already handled; it is one spelling out of four, and
+        // handling one is what let ::10.0.0.1, NAT64 and 6to4 through.
+        if (TryExtractEmbeddedV4(b, out var embedded))
+        {
+            return IsPermittedV4(embedded);
+        }
+
+        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8)
+        {
+            return false;                                 // 2001:db8::/32 documentation
+        }
+
+        return !(b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00); // 2001::/32 Teredo
+    }
+
+    /// <summary>
+    /// Recovers the IPv4 address carried inside an IPv6 encoding. Each of these reaches an
+    /// IPv4 destination while looking like an IPv6 one, so each must be judged by the IPv4
+    /// rules rather than the IPv6 ones.
+    /// </summary>
+    private static bool TryExtractEmbeddedV4(byte[] b, out IPAddress embedded)
+    {
+        embedded = IPAddress.None;
+
+        // ::a.b.c.d — IPv4-compatible, high 96 bits zero. ::1 and :: are already refused.
+        if (b.Take(12).All(octet => octet == 0))
+        {
+            embedded = new IPAddress(b[12..16]);
+            return true;
+        }
+
+        // 64:ff9b::/96 — the NAT64 well-known prefix.
+        if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B)
+        {
+            embedded = new IPAddress(b[12..16]);
+            return true;
+        }
+
+        // 2002:V4::/16 — 6to4 carries the address in the second through fifth octets.
+        if (b[0] == 0x20 && b[1] == 0x02)
+        {
+            embedded = new IPAddress(b[2..6]);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -44,11 +44,28 @@ public sealed class ValidateDestination(
 {
     private static readonly EventId Rejected = new(1000, "link.destination.rejected");
 
+    /// <summary>
+    /// The length bound <c>STD-SEC-02</c> requires. The rule asks for type, range, length
+    /// and format at the trust boundary; only type and format existed, so an unbounded
+    /// string reached DNS resolution and the log. 2048 is the conventional URL cap.
+    /// </summary>
+    public const int MaxDestinationLength = 2048;
+
     public async Task<DestinationValidationResult> ExecuteAsync(
         string? rawUrl,
         CancellationToken cancellationToken)
     {
-        // The scheme is checked first so a caller supplying "javascript:alert(1)" does not
+        // Length is checked before anything else — before parsing, before resolution,
+        // before logging — so an oversized value never reaches a downstream cost.
+        if (rawUrl is { Length: > MaxDestinationLength })
+        {
+            return Record(
+                DestinationValidationResult.Refused(DestinationRefusal.NotAbsoluteUrl),
+                rawUrl: null,
+                resolution: null);
+        }
+
+        // The scheme is checked next so a caller supplying "javascript:alert(1)" does not
         // cause a network call on our behalf.
         var schemeVerdict = DestinationPolicy.CheckScheme(rawUrl);
 
