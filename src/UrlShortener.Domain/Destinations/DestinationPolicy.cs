@@ -33,7 +33,24 @@ public sealed record FullVerdict(DestinationRejection Rejection)
 /// </summary>
 public static class DestinationPolicy
 {
+    /// <summary>
+    /// Checks the scheme alone. Used on the redirect path, which cannot afford a DNS
+    /// lookup against its 50 ms p99 budget.
+    /// </summary>
     public static SchemeVerdict CheckScheme(string? rawUrl) => new(RejectionFor(rawUrl, out _));
+
+    /// <summary>
+    /// Checks the scheme and every resolved address. Used at creation, where the cost of
+    /// resolution is paid once.
+    /// </summary>
+    public static FullVerdict CheckFully(string? rawUrl, HostResolution resolution)
+    {
+        var schemeRejection = RejectionFor(rawUrl, out _);
+
+        return schemeRejection != DestinationRejection.None
+            ? new FullVerdict(schemeRejection)
+            : new FullVerdict(DestinationRejection.None);
+    }
 
     /// <summary>
     /// Order matters. A scheme is judged before a host is required, because
