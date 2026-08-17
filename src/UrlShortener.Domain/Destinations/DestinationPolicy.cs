@@ -55,15 +55,22 @@ public static class DestinationPolicy
             return new FullVerdict(schemeRejection);
         }
 
+        // Every arm refuses except a resolution that produced addresses and passed them.
+        // This is where "fail closed" is decided, and it is decided in Domain because what
+        // an unresolvable host means is a rule about a permitted destination.
         return resolution switch
         {
-            HostResolution.Resolved resolved => new FullVerdict(JudgeAddresses(resolved.Addresses)),
+            HostResolution.Resolved { Addresses.Count: 0 } =>
+                new FullVerdict(DestinationRejection.HostNotResolved),
 
-            // T-10 and T-11 give these arms their behaviour in the next step. Throwing
-            // rather than permitting keeps the gap loud: an unhandled resolution outcome
-            // must never read as "permitted" in a control that prevents open redirect.
-            _ => throw new NotImplementedException(
-                $"No rule yet for resolution outcome {resolution.GetType().Name}")
+            HostResolution.Resolved resolved =>
+                new FullVerdict(JudgeAddresses(resolved.Addresses)),
+
+            HostResolution.NotFound => new FullVerdict(DestinationRejection.HostNotResolved),
+
+            HostResolution.Failed => new FullVerdict(DestinationRejection.ResolutionFailed),
+
+            _ => new FullVerdict(DestinationRejection.ResolutionFailed)
         };
     }
 
