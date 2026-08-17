@@ -1,14 +1,46 @@
+using Microsoft.EntityFrameworkCore;
+using UrlShortener.Api.ShortLinks;
+using UrlShortener.Application.Destinations;
+using UrlShortener.Application.ShortLinks;
+using UrlShortener.Domain.ShortLinks;
+using UrlShortener.Infrastructure.Dns;
+using UrlShortener.Infrastructure.ShortLinks;
+
+// The composition root — layers.md §2.3. The only file permitted to reference every
+// layer, and only to bind implementations to interfaces. This is also what earns the
+// Infrastructure project reference that §2.2 otherwise forbids (review finding ARCH-001).
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<ShortLinkDbContext>(o =>
+    o.UseSqlite(builder.Configuration.GetConnectionString("ShortLinks") ?? "Data Source=shortlinks.db"));
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IShortCodeGenerator, CryptoShortCodeGenerator>();
+
+// ADR-001: explicit timeout, no retry.
+builder.Services.AddSingleton<IHostResolver>(_ => new DnsHostResolver(TimeSpan.FromSeconds(2)));
+
+// Singletons: their tallies are process-wide and meaningless per request.
+builder.Services.AddSingleton<RejectionCounter>();
+builder.Services.AddSingleton<CreateFailureCounter>();
+builder.Services.AddSingleton<ResolveFailureCounter>();
+
+builder.Services.AddScoped<IShortLinkRepository, EfShortLinkRepository>();
+builder.Services.AddScoped<ValidateDestination>();
+builder.Services.AddScoped<CreateShortLink>();
+builder.Services.AddScoped<ResolveShortLink>();
 
 var app = builder.Build();
 
-// No routes yet. The scaffold route left by `dotnet new web` was removed: it was
-// `app.MapGet("/", ...)`, which STD-ARCH-03 and architecture/api.md §2.1 forbid —
-// "A route with no version prefix must not be added." It was the only route in the
-// repository, so leaving it invited the next endpoint to be copied from it.
-//
-// Endpoints arrive with #18 (create), #19 (redirect) and #22/#24 (query, update),
-// at which point this file also becomes the composition root layers.md §2.3 describes
-// and registers DnsHostResolver against IHostResolver — see ARCH-001.
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<ShortLinkDbContext>().Database.EnsureCreated();
+}
+
+app.MapShortLinks();
 
 app.Run();
+
+/// <summary>Exposed so the integration tests can host this application.</summary>
+public partial class Program;
