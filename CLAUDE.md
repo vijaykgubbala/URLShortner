@@ -40,6 +40,22 @@ Everything below is machinery in service of that sentence. When a rule here seem
 
 Handover runs **before** review deliberately: the handover artifact — release notes, risk analysis, planned-versus-actual test coverage — tells the reviewer where to look before they start. `/gate-check` sits between review and compound because it is the step that can stop the work, and it must run after the findings exist and before the issue is closed out.
 
+### How much of the loop to run
+
+**Default depth is minimal: build with tests, commit, move on.** Run stages of the loop when the issue's risk label calls for them, not by default.
+
+| Risk label | Loop stages that run |
+|---|---|
+| `risk:low` | `/workflow-execute` only |
+| `risk:medium` | `/workflow-execute` → `/workflow-review` |
+| `risk:high` | **The full loop, every stage, no exceptions** |
+
+The intake already decided how much process the work deserves and wrote it on the issue as a risk label. Running the full loop on a `risk:low` issue anyway discards that decision — it is the same ceremony `/work-intake` exists to prevent, arriving one stage later.
+
+**The risk label is read per issue, never per batch.** A request to build several issues together does not lower the depth of the highest-risk one among them; each is run at its own label. This is the failure mode that has actually occurred here — two issues named in one sentence, and the `risk:high` one built at the depth of the `risk:medium` one beside it.
+
+Depth below `risk:high` is a default, not a ceiling. Raise it for any issue where the work turns out to be more than the label anticipated, and say that is what happened.
+
 ### Execution modes
 
 `/work-intake` assigns an execution mode, `/workflow-plan` writes the plan against it, and `/workflow-execute` runs the matching cycle. Red-green cannot apply to a refactor (behaviour must not change) or to a test (you cannot write a failing test for a test), so in those modes the verification **inverts** rather than being dropped.
