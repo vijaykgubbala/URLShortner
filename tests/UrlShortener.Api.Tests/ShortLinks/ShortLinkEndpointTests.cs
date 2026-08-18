@@ -154,6 +154,105 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
     }
 
     /// <summary>
+    /// Review finding C4 — /{code} used to capture every single-segment path, so these all
+    /// became database round trips inside the 50 ms p99 budget. Browsers request the first
+    /// two unprompted. They now miss in routing.
+    /// </summary>
+    [Theory]
+    [InlineData("/favicon.ico")]
+    [InlineData("/robots.txt")]
+    [InlineData("/apple-touch-icon.png")]
+    [InlineData("/a")]
+    [InlineData("/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public async Task A_path_that_is_not_code_shaped_never_reaches_resolution(string path)
+    {
+        var response = await NoRedirect(_host).GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>Right length, wrong alphabet — the guard STD-SEC-02 asks for beyond length.</summary>
+    [Theory]
+    [InlineData("/abc-def")]
+    [InlineData("/../etc/")]
+    [InlineData("/%20%20%20%20%20%20%20")]
+    public async Task A_code_outside_the_alphabet_is_refused(string path)
+    {
+        var response = await NoRedirect(_host).GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Review finding C1/SEC-002. Uri.Host here is `evil.example`, which resolves publicly,
+    /// so every host and address rule passed it — while the Location header a person reads
+    /// says paypal.com.
+    /// </summary>
+    [Fact]
+    public async Task A_destination_carrying_userinfo_is_refused_and_not_stored()
+    {
+        const string destination = "https://www.paypal.com@evil.example/login";
+
+        var response = await NoRedirect(_host).PostAsJsonAsync(
+            "/v1/short-links", new { destination });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+
+        using var scope = _host.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ShortLinkDbContext>();
+        Assert.DoesNotContain(db.ShortLinks, l => l.Destination == destination);
+    }
+
+    /// <summary>
+    /// Review finding C2/COR-001. The raw string used to be stored and handed to the
+    /// Location header verbatim: a non-ASCII byte in a response header is what Kestrel
+    /// refuses, so the link created with 201 then failed on every visit.
+    /// </summary>
+    [Fact]
+    public async Task A_non_ascii_destination_round_trips_as_its_escaped_form()
+    {
+        var client = NoRedirect(_host);
+
+        var created = await client.PostAsJsonAsync(
+            "/v1/short-links", new { destination = "https://example.com/café" });
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var code = (await created.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!.Code;
+
+        var redirect = await client.GetAsync($"/{code}");
+
+        Assert.Equal(HttpStatusCode.Found, redirect.StatusCode);
+
+        // The raw header value, not Headers.Location.ToString() — Uri.ToString() unescapes,
+        // so asserting against it would test .NET's parser rather than what goes on the wire.
+        Assert.Equal("https://example.com/caf%C3%A9", RawLocation(redirect));
+    }
+
+    /// <summary>A CR/LF in a destination must never reach a response header intact.</summary>
+    [Fact]
+    public async Task A_destination_containing_crlf_is_escaped_before_it_reaches_the_header()
+    {
+        var client = NoRedirect(_host);
+
+        var created = await client.PostAsJsonAsync(
+            "/v1/short-links", new { destination = "https://example.com/a\r\nSet-Cookie: x=y" });
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var code = (await created.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!.Code;
+
+        var redirect = await client.GetAsync($"/{code}");
+        var location = RawLocation(redirect);
+
+        Assert.DoesNotContain("\r", location);
+        Assert.DoesNotContain("\n", location);
+        Assert.Contains("%0D%0A", location);
+        Assert.False(redirect.Headers.TryGetValues("Set-Cookie", out _));
+    }
+
+    private static string RawLocation(HttpResponseMessage response) =>
+        response.Headers.GetValues("Location").Single();
+
+    /// <summary>
     /// AC: a stored destination the policy now rejects is refused with 410 and no Location.
     /// The row is written directly, simulating a link stored before a policy change.
     /// </summary>

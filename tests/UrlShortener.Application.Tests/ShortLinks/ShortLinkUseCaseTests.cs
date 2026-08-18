@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using UrlShortener.Application.Destinations;
 using UrlShortener.Application.ShortLinks;
 using UrlShortener.Domain.Destinations;
@@ -45,10 +46,36 @@ public class ShortLinkUseCaseTests
         public string Next() => codes[Math.Min(_next++, codes.Length - 1)];
     }
 
+    /// <summary>
+    /// Captures the structured event name, matching the pattern already used by
+    /// RejectionTelemetryTests for #17. Review findings C7/C8 — both telemetry ACs are
+    /// conjunctions ("emits X *and* increments Y") and only the counter half was asserted,
+    /// so either log call could be deleted with every test still green.
+    /// </summary>
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Events { get; } = [];
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Events.Add(eventId.Name ?? string.Empty);
+            Messages.Add(formatter(state, exception));
+        }
+    }
+
     private static CreateShortLink Creator(
-        FakeRepository repository, IShortCodeGenerator codes, CreateFailureCounter? counter = null) =>
+        FakeRepository repository,
+        IShortCodeGenerator codes,
+        CreateFailureCounter? counter = null,
+        ILogger<CreateShortLink>? logger = null) =>
         new(repository, codes, new ValidateDestination(new PermittingResolver()),
-            TimeProvider.System, null, counter);
+            TimeProvider.System, logger, counter);
 
     [Fact]
     public async Task A_colliding_code_is_retried_rather_than_returned_as_a_failure()
@@ -77,6 +104,32 @@ public class ShortLinkUseCaseTests
         Assert.Equal(CreateOutcome.CodeExhausted, result.Outcome);
         Assert.Null(result.Code);
         Assert.Equal(1, counter.Total);
+    }
+
+    /// <summary>C8 — AC #18.5's log half. Deleting the LogError left every test green.</summary>
+    [Fact]
+    public async Task Exhausting_the_retry_budget_emits_link_create_failed()
+    {
+        var repository = new FakeRepository();
+        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow));
+        var logger = new RecordingLogger<CreateShortLink>();
+
+        await Creator(repository, new ScriptedGenerator("TAKEN01"), logger: logger)
+            .ExecuteAsync("https://example.com/second", CancellationToken.None);
+
+        Assert.Single(logger.Events, e => e == "link.create.failed");
+    }
+
+    /// <summary>The negative twin — without it the event could be made unconditional.</summary>
+    [Fact]
+    public async Task A_successful_create_emits_no_failure_event()
+    {
+        var logger = new RecordingLogger<CreateShortLink>();
+
+        await Creator(new FakeRepository(), new ScriptedGenerator("FREE001"), logger: logger)
+            .ExecuteAsync("https://example.com/ok", CancellationToken.None);
+
+        Assert.Empty(logger.Events);
     }
 
     [Fact]
@@ -110,11 +163,34 @@ public class ShortLinkUseCaseTests
     {
         var repository = new FakeRepository();
         repository.Seed(new ShortLink("LEGACY1", "file:///etc/passwd", DateTimeOffset.UtcNow));
+        var logger = new RecordingLogger<ResolveShortLink>();
+        var counter = new ResolveFailureCounter();
 
-        var result = await new ResolveShortLink(repository)
+        var result = await new ResolveShortLink(repository, logger, counter)
             .ExecuteAsync("LEGACY1", CancellationToken.None);
 
         Assert.Equal(ResolveOutcome.NoLongerPermitted, result.Outcome);
         Assert.Null(result.Destination);
+
+        // C7 — AC #19.5 is a conjunction. Both halves, exactly once each.
+        Assert.Single(logger.Events, e => e == "redirect.resolve.failed");
+        Assert.Equal(1, counter.Total);
+    }
+
+    /// <summary>The negative twin for AC #19.5.</summary>
+    [Fact]
+    public async Task A_successful_resolve_emits_no_failure_event_and_moves_no_counter()
+    {
+        var repository = new FakeRepository();
+        repository.Seed(new ShortLink("GOOD001", "https://example.com/ok", DateTimeOffset.UtcNow));
+        var logger = new RecordingLogger<ResolveShortLink>();
+        var counter = new ResolveFailureCounter();
+
+        var result = await new ResolveShortLink(repository, logger, counter)
+            .ExecuteAsync("GOOD001", CancellationToken.None);
+
+        Assert.Equal(ResolveOutcome.Found, result.Outcome);
+        Assert.Empty(logger.Events);
+        Assert.Equal(0, counter.Total);
     }
 }

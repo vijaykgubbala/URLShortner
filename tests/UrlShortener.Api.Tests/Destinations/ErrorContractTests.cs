@@ -113,4 +113,22 @@ public class ErrorContractTests
     {
         Assert.Null(DestinationProblem.FromOrNull(DestinationRefusal.None, Trace));
     }
+
+    /// <summary>
+    /// Review finding H1 — raised independently by the testing, correctness and
+    /// architecture lenses. Code exhaustion was reported through DestinationProblem
+    /// .Invalid, which hard-codes 400, under an HTTP 503. api.md §4.2: "status matches the
+    /// HTTP status code." A client reading the body stopped retrying; a client reading the
+    /// status line retried. Both were conforming.
+    /// </summary>
+    [Fact]
+    public void An_allocation_failure_carries_a_server_status_that_matches_its_body()
+    {
+        var problem = DestinationProblem.Unavailable(Trace);
+
+        Assert.Equal(503, problem.Status);
+        Assert.NotEqual("invalid-request", problem.Type);
+        Assert.Empty(problem.Errors);
+        Assert.Equal(Trace, problem.TraceId);
+    }
 }

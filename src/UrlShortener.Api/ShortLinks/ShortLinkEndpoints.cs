@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using UrlShortener.Api.Destinations;
 using UrlShortener.Application.ShortLinks;
+using UrlShortener.Domain.ShortLinks;
 
 namespace UrlShortener.Api.ShortLinks;
 
@@ -36,20 +37,36 @@ public static class ShortLinkEndpoints
                     return Results.Json(problem, statusCode: problem.Status);
 
                 default:
-                    return Results.Json(
-                        DestinationProblem.Invalid(
-                            [("destination", "a unique short code could not be allocated")], traceId),
-                        statusCode: 503);
+                    // Not DestinationProblem.Invalid: that factory hard-codes status 400,
+                    // so returning it under a 503 put "status": 400 in the body of a 503
+                    // response. api.md §4.2 — "status matches the HTTP status code" — and
+                    // two conforming clients derived opposite retry behaviour from one
+                    // response. The status is now taken from the problem itself.
+                    var unavailable = DestinationProblem.Unavailable(traceId);
+                    return Results.Json(unavailable, statusCode: unavailable.Status);
             }
         });
 
         // #19 — the public redirect endpoint. api.md §1.4: this is deliberately not the
         // domain API and carries no version prefix; it performs resolution and nothing else.
-        app.MapGet("/{code}", async (
+        //
+        // The length constraint is derived from the domain constant rather than written as
+        // a literal, so the route cannot drift from the generator. It also stops the
+        // template swallowing every root-level path: /favicon.ico and /robots.txt, which
+        // browsers request unprompted, now miss in routing instead of costing a query
+        // against the 50 ms p99 budget.
+        app.MapGet($"/{{code:length({ShortLink.CodeLength})}}", async (
             [FromRoute] string code,
             ResolveShortLink useCase,
             CancellationToken ct) =>
         {
+            // STD-SEC-02 asks for format at the boundary, not only length. A route value
+            // outside the code alphabet is refused before it reaches persistence.
+            if (!ShortLink.IsWellFormedCode(code))
+            {
+                return Results.NotFound();
+            }
+
             var result = await useCase.ExecuteAsync(code, ct);
 
             return result.Outcome switch

@@ -57,6 +57,14 @@ public sealed record DestinationProblem(
             "The destination host could not be checked. Try again shortly.",
             traceId),
 
+        DestinationRefusal.UserInfoNotPermitted => Policy(
+            "destination-userinfo-not-permitted",
+            "The destination URL is not a permitted destination.",
+            // Says nothing about userinfo specifically — api.md §4.3. Naming the check
+            // tells a probe which shape to try next.
+            "This destination cannot be shortened.",
+            traceId),
+
         _ => throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null)
     };
 
@@ -74,6 +82,20 @@ public sealed record DestinationProblem(
             "One or more fields are invalid.",
             traceId,
             failures.Select(f => new FieldError(f.Field, f.Reason)).ToArray());
+
+    /// <summary>
+    /// A server-side failure to allocate, not a caller error. Separate from
+    /// <see cref="Invalid"/> because that factory hard-codes 400 — returning it under a
+    /// 503 produced a body whose own status field contradicted the response.
+    /// </summary>
+    public static DestinationProblem Unavailable(string traceId) =>
+        new(
+            "short-code-allocation-failed",
+            "The short link could not be created.",
+            503,
+            "A unique short code could not be allocated. Try again shortly.",
+            traceId,
+            []);
 
     private static DestinationProblem Policy(
         string type, string title, string detail, string traceId) =>
