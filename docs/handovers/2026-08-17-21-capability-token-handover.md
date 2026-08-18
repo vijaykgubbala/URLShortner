@@ -83,7 +83,7 @@ count.**
 | T-13 create sets no-store | written | — |
 | T-14 structural absence proof | written | 4 tests in `ResponseSurfaceTests` |
 | T-15 redirect carries no token | written | — |
-| T-16 token in no log message | written | Exercises all three delete paths |
+| T-16 token in no log message | **changed** | **The claim that it "exercises all three delete paths" was untrue** — review finding TST-007. One shared `sut` deleted the row on the first call, so calls two and three were both unknown-code cases. Its assertions were also absence-only and therefore vacuous: deleting all logging left it green. Fixed with a fresh repository per call and a `NotEmpty` guard |
 | T-17 forged token rejected | written | — |
 | T-18 verification runs on not-found | **changed** | Planned as a counting **hasher** fake; `LinkToken` is static with nothing to inject. Delivered as a counting `ILinkTokenVerifier` — a seam added for the sole purpose of making this provable |
 | *(unplanned)* `Every_character_is_in_the_base64url_alphabet` | added | |
@@ -109,38 +109,50 @@ byte arrays rather than hand-typed base64url.
 
 ### What's Not Tested
 
-Named plainly. None of these is covered anywhere in the suite.
+Named plainly. None of these was covered anywhere in the suite when this was written.
 
-1. **The timing property is not measured.** T-18 proves verification is *reached* on the
-   not-found path. It does not prove the two paths take comparable time. A future change
-   that makes the not-found path cheaper in some other way would leak existence again, and
-   nothing here would fail. **This is the residual risk in ADR-002's central claim.**
-   No destination yet — it needs a decision about whether a timing assertion belongs in CI
-   at all.
+**Amended after `/workflow-review 21`.** Review finding TST-002 established that five of
+the seven gaps below had **no destination**, while plan step 20 — the step that exists to
+forbid exactly that — was marked complete. That is the #17 failure mode re-forming inside
+the control written to prevent it. Every gap now has a destination, recorded inline. Three
+were closed outright by the remediation pass; the rest have issues.
 
-2. **`EfShortLinkRepository.TryDeleteAsync` has no direct test.** It is exercised only
-   through the endpoint tests. Deleting a code that does not exist, and deleting twice, are
-   both untested against real SQLite — so the `> 0` return contract rests on
-   `ExecuteDeleteAsync` behaving as documented rather than as observed. Destination: **#50**.
+1. ~~**The timing property is not measured.**~~ **CLOSED** by review finding TST-003, which
+   showed the gap was worse than described: the seam counts invocations, so an early return
+   *inside* `LinkToken.Verify` left all 217 tests green while reintroducing the oracle —
+   verified by mutation. `LinkToken` now counts hash and compare operations and a test
+   asserts equal work across every input shape. The same mutation now fails exactly one
+   test. No clock in CI was needed after all.
 
-3. **Randomness quality is not tested, only shape and ordering.** A generator returning a
-   large fixed cycle of well-formed tokens passes every assertion. `RandomNumberGenerator`
-   is trusted; nothing verifies distribution.
+2. **`EfShortLinkRepository.TryDeleteAsync` has no direct test.** Destination: **#55**
+   (moved from #50, which is about test strength generally). Review finding TST-009 sharpened
+   this: the contract was not merely untested, its result was *discarded at the call site*, so
+   no test at any level could observe it regressing. The discard is fixed; the direct
+   repository tests are on #55.
 
-4. **Concurrent deletes are untested.** Two simultaneous deletes of one link, and a delete
-   racing a redirect, have no coverage.
+3. **Randomness quality is not tested, only shape and ordering.** Destination: **#50**.
+   Review finding TST-004 proved this by mutation — `Random.Shared.NextBytes` passes every
+   generator test, as does a seeded `Random`. Worse, the test file *claimed the opposite*.
+   That false claim is corrected; the distribution test is on #50. **AC-1's
+   "cryptographically secure source" clause remains unproven.**
+
+4. **Concurrent deletes are untested.** Destination: **#55**. Review finding COR-006 also
+   found a genuine check-then-act window between verification and removal, and correctly
+   declined to propose the one-line SQL-predicate fix because a convention in this repo
+   forbids it (COR-007 on #19, collation).
 
 5. **The pre-existing-database case is untested end to end.** `Verify` returning false for a
    null hash is unit-tested, but no test starts from a database created before this column
    and asserts a delete is refused. It cannot easily be, because `EnsureCreated` builds the
    schema from the current model — which is itself the gap #49 exists for.
 
-6. **No rate limiting on the delete endpoint.** #30 covers creation only. Each wrong token
-   costs a hash and a database read on an unauthenticated surface.
+6. **No rate limiting on the delete endpoint.** Destination: **#56**. Sharpened by review
+   finding SEC-003: the constant-work property ADR-002 requires makes this *worse*, because
+   the endpoint deliberately performs full verification work even for codes that do not
+   exist. The anti-enumeration design and the cost-amplification risk pull opposite ways.
 
-7. **Token loss has no recovery path, and no test asserts the consequence.** If the create
-   response is lost after commit, the link is permanently unmanageable. An idempotency key
-   is the standard remedy and must be designed in at creation.
+7. **Token loss has no recovery path, and no test asserts the consequence.** Destination:
+   **#57**.
 
 ### Mode-specific evidence — TDD
 

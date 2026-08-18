@@ -229,6 +229,7 @@ Tests precede the code they verify. Every step names the test it satisfies.
 ### Close-out
 
 - [x] **20.** Run the full suite. For every gap discovered during execution, create a test, a deferred finding, or a follow-up issue — not a note. *(`a-named-gap-is-not-a-work-item`)*
+  - **This box was checked before it was true.** Review finding TST-002: five of the handover's seven gaps had no destination when this was marked complete, which is precisely what the step forbids. Destinations were created afterwards — #55, #56, #57, plus findings TST-003 and TST-004 in the review record — and the handover's gap list now records them inline. Recorded rather than quietly corrected, because a step that can be checked while false is a step that will be.
 - [x] **21.** Verify every AC has a passing test asserting it. Report any without one as a blocker.
 
 ---

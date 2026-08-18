@@ -1,0 +1,349 @@
+{
+  "metadata": {
+    "timestamp": "2026-08-18T00:00:00Z",
+    "issue": 21,
+    "branch": "feat/21-capability-token",
+    "reviewed_commit": "b125607",
+    "remediation_commit": "328f06d",
+    "standards_version": "standards@2026.08.1",
+    "execution_mode": "TDD",
+    "handover": "docs/handovers/2026-08-17-21-capability-token-handover.md",
+    "agents_run": [
+      "review-security",
+      "review-correctness",
+      "review-testing",
+      "review-architecture"
+    ],
+    "agents_skipped": [],
+    "agents_failed": [],
+    "raw_finding_count": 28,
+    "deduplicated_finding_count": 26,
+    "recorded_finding_count": 25,
+    "test_counts": {
+      "before": 217,
+      "after": 231
+    },
+    "dedup_note": "28 raw findings; SEC-004 merged into TST-003 and TST-009 into COR-001, both same defect from two angles. COR-002, ARCH-006 and TST-010 all name ShortLinkEndpoints.cs:87 and were NOT merged - they are three different defects at one line (telemetry skipped, layering, untested) and merging would have lost two. One fix resolved all three.",
+    "handover_instruction_note": "Every agent was given the handover AND told explicitly not to skip anything it names, per docs/solutions/process/a-named-gap-is-not-a-work-item.md. On #17 agents were told to skip a handover-named gap and it shipped. That instruction produced value: TST-003 and TST-004 both corroborate handover gaps and both proved the gap was worse than the handover described.",
+    "verification_note": "Three agent claims were verified by execution before recording, and all three held. (1) ADR-002 is cited nine times in four shipped files and does not exist on this branch. (2) An early return inside LinkToken.Verify left all 217 tests green - so the commit claiming the seam made the property 'genuinely proven' was wrong. (3) Random.Shared.NextBytes passes every generator test, so the test file's claim to the contrary was false. Each is recorded as a correction rather than softened.",
+    "author_claims_falsified": [
+      "Commit 0b3aecb claimed the ILinkTokenVerifier seam made the constant-work property provable. It proves verification is reached, not that the work is constant. TST-003.",
+      "CryptoLinkTokenGeneratorTests claimed substituting Random.Shared would fail. It passes. TST-004.",
+      "The handover claimed the AC-5 log test exercises all three delete paths. The shared sut deletes the row on call one, so calls two and three are both unknown-code. TST-007.",
+      "Plan step 20 was checked while five of seven gaps had no destination. TST-002."
+    ]
+  },
+  "findings": [
+    {
+      "id": "SEC-001",
+      "severity": "critical",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 26,
+      "title": "STD-SEC-03 - the plaintext token is printed by the synthesised ToString",
+      "description": "Rule: STD-SEC-03 - \"No property holding a credential, token, key, or connection string may be serializable, logged by a default formatter, or exposed on a type's public surface\", detection hint naming a property that \"appears in a ToString override\". Evidence: CreateResult is a positional record with a ManagementToken property, so the compiler synthesises PrintMembers over every public property. Verified by execution: a probe record printed \"ManagementToken = SECRET-TOKEN-VALUE\". The XML comment asserting the token is never logged was a promise, not a control. The structural test could not see this type at all - it filtered to the UrlShortener.Api namespace and CreateResult is in Application.",
+      "disposition": "addressed",
+      "reason": "Fixed with a PrintMembers override omitting the credential, and the response-surface walker widened to the Application assembly so the type carrying the plaintext out of the use case is inside the category test rather than outside it.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "SEC-002",
+      "severity": "critical",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 15,
+      "title": "STD-SEC-03 - ToString half fixed; serialisation half is an unresolved ESCALATE",
+      "description": "Rule: STD-SEC-03 as above. Evidence: CreateShortLinkResponse is a positional record whose ManagementToken is public, serialised to JSON, and printed by the synthesised ToString. The lens correctly split this into two halves with different answers. The ToString half is a plain defect. The serialisation half is a genuine conflict: AC-1 requires \"the response contains a management token\" and a token that is never serialisable can never be delivered. The plan claimed reconciliation - \"the persisted property is not the credential, and the credential is never at rest\" - but that argument answers only the persistence question, and STD-SEC-03 also says serializable.",
+      "disposition": "open",
+      "reason": "ToString half ADDRESSED in 328f06d. Serialisation half remains OPEN, awaiting a named approver and expiry for a WVR against STD-SEC-03 scoped to this single property on the 201. The engineer chose the waiver route and undertook to supply the name and date; neither has been given, and waivers.md is explicit that a waiver missing either is invalid - treated as absent, not as weak. Recording an approver I chose myself would be the same defect this project already recorded once. /gate-check must block on this.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "SEC-003",
+      "severity": "critical",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 26,
+      "title": "STD-SEC-02 - the Authorization header reaches Domain with no length or format check",
+      "description": "Rule: STD-SEC-02 - \"Every value that originates outside the process must be validated for type, range, length, and format at the point it enters the system, before it reaches any domain or persistence code\", detection hint naming a header consumed without a guard clause in the same handler. Evidence: ReadBearer checked the scheme prefix only; the remainder passed to the use case and reached LinkToken.Decode in UrlShortener.Domain. The contrast within the same file is what makes it a violation rather than a preference - the route value gets its boundary guard two lines down, and the redirect handler carries the comment \"STD-SEC-02 asks for format at the boundary, not only length\". The standard was applied to the code and not to the credential beside it.",
+      "disposition": "addressed",
+      "reason": "Fixed with a length guard in ReadBearer returning null for anything not 43 or 44 characters, deriving the bound from a new ShortLink.TokenLength constant so it cannot drift from the generator. Returning null rather than short-circuiting is deliberate: Verify still runs on every path, so the constant-work property is untouched. A boundary theory covering 1, 200 and 30,000-character values asserts the uniform 404.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-001",
+      "severity": "critical",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 157,
+      "title": "STD-OPS-02 - the delete refusal metric and log event have no assertion anywhere",
+      "description": "Rule: STD-OPS-02 - \"A story introducing a new behaviour or failure path must include acceptance criteria for its structured log events, its metric, and the alert condition - not a follow-up issue for them.\" The production code declares the metric as an AC in its own doc comment. Evidence: DeleteRefusalCounter appeared in no test file; every DeleteShortLink construction omitted it, so counter?.Increment() never ran against a real counter. The event name link.delete.refused appeared in no test. The cause was visible in the test double: the new RecordingLogger recorded only Messages, dropping the Events list its sibling twelve lines up keeps - the list that exists because of findings C7/C8 on #19, where a telemetry AC was a conjunction and only one half was asserted. The same defect reappeared with the halves swapped.",
+      "disposition": "addressed",
+      "reason": "Fixed. Events restored to the double, with Assert.Single on a refusal, Assert.Empty on success, and counter assertions in both directions. Mirrors the C7/C8 pattern the same file already contained.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-002",
+      "severity": "critical",
+      "file": "docs/handovers/2026-08-17-21-capability-token-handover.md",
+      "line": 116,
+      "title": "Five of seven handover gaps had no destination while plan step 20 was marked complete",
+      "description": "Rule: docs/solutions/process/a-named-gap-is-not-a-work-item.md - \"Convert each 'What's Not Tested' entry into either a test, a deferred review finding, or a follow-up issue before the handover is considered complete. A gap with no destination is a gap with no owner.\" Plan step 20 restates it and was checked. Evidence: of seven gaps, only 2 (#50) and 5 (#49) had destinations. Gap 1 said \"No destination yet\". Gaps 3, 4, 6 and 7 named none. This is the #17 failure mode re-forming inside the control written to prevent it.",
+      "disposition": "addressed",
+      "reason": "Fixed. Issues #55 (concurrency and the repository contract), #56 (delete rate limiting) and #57 (idempotent create for lost tokens) opened; gaps 1 and 3 take their destinations from findings TST-003 and TST-004 in this record; the handover's gap list records each inline; and the plan now annotates step 20 to say the box was checked before it was true, rather than quietly correcting it.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-003",
+      "severity": "high",
+      "file": "src/UrlShortener.Domain/ShortLinks/LinkToken.cs",
+      "line": 93,
+      "title": "T-18 counted invocations, not work - an early return inside Verify survived the whole suite",
+      "description": "Rule: the seam's own stated purpose - \"This interface exists for one reason: to make the constant-work property provable.\" Evidence: T-18 asserts verifier.Calls == 1, which observes that the method was entered and nothing about what it does. VERIFIED BY MUTATION during this review: inserting `if (storedHash is null) return false;` as the first line of LinkToken.Verify left ALL 217 TESTS GREEN while making the unknown-code path skip a SHA-256 and a FixedTimeEquals that the wrong-token path performs - exactly the timing oracle ADR-002 rests on closing.",
+      "disposition": "addressed",
+      "reason": "Fixed, and this is the finding that most changed the work. The commit adding the seam claimed the property was \"genuinely proven rather than asserted\"; that was false. The mutation proof run at the time was at the use-case level and never inside Verify. LinkToken now counts hash and compare operations behind InternalsVisibleTo, and a test asserts equal work across five input shapes. Re-verified: the same mutation now fails exactly one test. Closes handover gap 1, which had no destination.",
+      "commit": "328f06d",
+      "also_raised_by": [
+        "review-security SEC-004"
+      ]
+    },
+    {
+      "id": "SEC-005",
+      "severity": "high",
+      "file": "src/UrlShortener.Api/Destinations/DestinationProblem.cs",
+      "line": 101,
+      "title": "STD-SEC-06 - the enumeration rationale overstates what the uniform 404 achieves",
+      "description": "Rule: STD-SEC-06 - \"Each threat named in a story, ADR, or review finding must be paired with an automated test asserting that the attack fails.\" Evidence: the threat is named in the code comment and in the plan as the entire justification for amending AC-3. But GET /{code} answers 302 for a live code and 404 for an unknown one, with no token required - VERIFIED against the branch's own tests, which use exactly that to assert a link survived a refused delete. A prober enumerates through the redirect path and never touches DELETE. The uniform 404 is correct as defence in depth; the rationale recorded for it in ADR-002, in api.md's proposed amendment, in the plan, the handover and the release notes claims more than it delivers. What protects the code space is unguessability, not response uniformity.",
+      "disposition": "deferred",
+      "reason": "Deferred to PR #53, because the defect is in ADR-002's reasoning rather than in this branch's code, and ADR-002 is the gated change that PR carries. Recorded as blocking that PR's approval: a reviewer is being asked to write this rationale into api.md permanently, and it is wrong as stated. No code change here - the uniform 404 stays."
+    },
+    {
+      "id": "COR-001",
+      "severity": "high",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 169,
+      "title": "DeleteShortLink reported Deleted without observing whether a row was removed",
+      "description": "Rule: the interface's own contract, introduced by this change - \"Returns false if no row was removed - the database decides, not a prior read.\" Evidence: the bool was discarded and DeleteOutcome.Deleted returned unconditionally, so it was an unverified claim. Two concurrent deletes with the correct token both pass verification, one removes the row, the other removes zero rows, and both callers receive 204. It also made handover gap 2 worse than stated: the contract was not merely untested, its result was unused, so no test at any level could detect it regressing.",
+      "disposition": "addressed",
+      "reason": "Fixed. The result is bound and a zero-row delete maps to Refused, which keeps the uniform 404 intact and makes the outcome honest. A use-case test with a repository returning false after successful verification asserts it. The remaining concurrency coverage is on #55.",
+      "commit": "328f06d",
+      "also_raised_by": [
+        "review-testing TST-009"
+      ]
+    },
+    {
+      "id": "COR-002",
+      "severity": "high",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 87,
+      "title": "A malformed-code delete was refused with no log line and no counter increment",
+      "description": "Rule: STD-OPS-02, plus the change's own release notes - \"Every such response carries a traceId, and the real reason is in the log under it - that identifier is what support should ask for.\" Evidence: the IsWellFormedCode guard short-circuited in the endpoint, so neither counter?.Increment() nor the link.delete.refused LogWarning executed, yet the endpoint still emitted a 404 with a traceId. A 404 carrying a trace identifier for which no log entry exists defeats exactly the mitigation the release notes tell support to rely on, and link_delete_refusals silently undercounts a whole class of refusal. Reachable: the route constraint is only length(7), so DELETE /v1/short-links/abc!def takes this branch.",
+      "disposition": "addressed",
+      "reason": "Fixed by moving the guard into the use case, so every delete outcome is produced by the type that coordinates the operation and every refusal is logged and counted. A malformed code still costs no database round trip. This also resolves ARCH-006 and TST-010 at the same line.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-004",
+      "severity": "high",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 95,
+      "title": "AC-1's cryptographically-secure clause has no test, and the test file claimed otherwise",
+      "description": "AC-1: \"...a management token generated from a cryptographically secure source.\" Evidence: the class comment claimed \"substituting Random.Shared or a counter for the CSPRNG fails here rather than passing review\". VERIFIED BY MUTATION during this review: replacing RandomNumberGenerator.Fill with Random.Shared.NextBytes leaves all 20 generator tests passing. So does a seeded Random. Only a monotonic counter fails. A false claim in a test file is worse than no claim, because a reader believes it.",
+      "disposition": "addressed",
+      "reason": "The false comment is corrected to state plainly what the tests do and do not prove, and that AC-1's second clause is unproven. The distribution test that would close it is deferred to #50 - this gives handover gap 3 its destination.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-005",
+      "severity": "high",
+      "file": "tests/UrlShortener.Api.Tests/ShortLinks/ResponseSurfaceTests.cs",
+      "line": 26,
+      "title": "The response-surface walker could not see nested types, arrays, or the Application assembly",
+      "description": "AC-4: \"Given any response other than the original create...\" - a category claim the test exists to prove structurally. Evidence: three escapes. Type.IsPublic is FALSE for a nested public type (that is IsNestedPublic), so a response record declared inside a static endpoints class was never enqueued. Unwrap followed one generic level and ignored arrays, so a ShortLink[] property escaped both the entity check and the walk into its members. And the namespace filter excluded the Application assembly entirely - where CreateResult carries the plaintext token, so the test asserting \"exactly one type carries a token\" could not see the second one.",
+      "disposition": "addressed",
+      "reason": "Fixed: IsNestedPublic added, Unwrap made recursive and array-aware, and both assemblies walked. The carrier assertion now expects two - the transport DTO and the use-case result - and is order-independent so a third fails informatively. The walker-reaches-the-surface guard gained an Application-layer assertion so the widening cannot silently regress.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-006",
+      "severity": "high",
+      "file": "tests/UrlShortener.Api.Tests/ShortLinks/ShortLinkEndpointTests.cs",
+      "line": 414,
+      "title": "T-11 asserted no headers and no property set, and the plan's own wording required headers",
+      "description": "Rule: the plan's amended T-11 row - \"identical in status, type, title, detail and headers\". Evidence: the delivered test read no header of any of the three responses, and the handover's note restated the delivered assertions while dropping the word headers without recording that as a change. Consequences: Cache-Control no-store was asserted on exactly one of the three refusal paths, though ADR-002 makes it the mitigation for choosing 404 over 403; and the body comparison was field-by-field, so a path returning the same four fields with a non-empty errors array is distinguishable and T-11 passed.",
+      "disposition": "addressed",
+      "reason": "Fixed. T-11 now compares the JSON property set and the full header set excluding per-request values, which asserts no-store on all three refusal paths in one place and kills the errors-array mutation.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-007",
+      "severity": "high",
+      "file": "tests/UrlShortener.Application.Tests/ShortLinks/ShortLinkUseCaseTests.cs",
+      "line": 360,
+      "title": "The AC-5 log test passed with all logging deleted and did not exercise the paths it claimed",
+      "description": "AC-5: \"the token does not appear in any log argument.\" Evidence: the assertions were absence-only and trivially true over an empty list, so deleting the LogWarning left the test green - the same vacuity the suite already guards against elsewhere with a walker-reaches-the-surface test. Second defect: one shared sut over one repository, and the first call deletes the row, so calls two and three were both unknown-code cases. The handover's claim that it \"exercises all three delete paths\" was untrue. Third: the plan scoped T-16 to \"neither the create path nor a failed delete\", and only the delete half was written.",
+      "disposition": "addressed",
+      "reason": "Fixed. A NotEmpty guard prevents the vacuous pass, each call gets a fresh repository, and a malformed-code path is added as a fourth. The handover's Planned-vs-Actual row is corrected to record the false claim rather than quietly restating it. The create-side half is on #50.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-008",
+      "severity": "high",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 153,
+      "title": "No test proved one link's token cannot delete another link",
+      "description": "AC-2 reads \"the correct token for that link\", and STD-SEC-06 requires a test asserting the attack fails. Evidence: the threat is named in the suite itself - \"Two links get two tokens - a shared token would authorize the wrong link\" - but that test only asserts the tokens differ. Every negative test in the suite used a synthetic token. A real, valid, live credential belonging to a different row was never presented, which is the actual attack and the only case distinguishing \"verifies against this row's hash\" from \"verifies against any hash\".",
+      "disposition": "addressed",
+      "reason": "Fixed at both levels: a use-case test seeding two links with different hashes, and an endpoint test creating two links and presenting A's token against B, asserting the uniform 404 and that B still resolves.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "TST-010",
+      "severity": "high",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 87,
+      "title": "The alphabet guard on the delete route had no test",
+      "description": "Rule: plan step 18 - \"Guard with ShortLink.IsWellFormedCode for the alphabet half.\" Evidence: neither arm's false case was exercised. The redirect route's equivalent guard has a theory covering /abc-def and similar; no delete test used anything but a 7-character alphanumeric code. Deleting the guard left the suite green.",
+      "disposition": "addressed",
+      "reason": "Fixed with a theory mirroring the redirect guard. After COR-002 moved the guard into the use case, this also pins that a malformed code produces the same problem body as every other refusal rather than a hand-built one.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "ARCH-001",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 100,
+      "title": "README §1.3 - the §2.6 deviation ships without the ADR and amendment that would license it",
+      "description": "Rule: architecture/README.md §1.3 - \"Where a rule here proves wrong once code exists, the correction is an ADR-nnn in decisions/ plus an edit to the relevant file under the gate, not a local deviation.\" Evidence: on this branch decisions/ holds only ADR-001 and api.md §2.6 is unedited, so what exists is precisely the shape §1.3 names as wrong - a deviation recorded in a plan, a handover and an issue.",
+      "disposition": "deferred",
+      "reason": "Deferred as a merge-order constraint rather than a code change: PR #53 must land before or with this branch. Recorded so /gate-check sees the sequencing requirement, and so the branch is not merged alone."
+    },
+    {
+      "id": "ARCH-002",
+      "severity": "medium",
+      "file": "src/UrlShortener.Domain/ShortLinks/LinkToken.cs",
+      "line": 13,
+      "title": "Six production files cite ADR-002, which does not exist on this branch",
+      "description": "Rule: README §1.3 as above. Evidence: VERIFIED - ADR-002 is cited nine times across four shipped source files and decisions/ on this branch contains only ADR-001. The document lives on docs/adr-002-uniform-404 (PR #53). Both the security and architecture lenses recorded that they therefore could not judge whether the code matches the reasoning it defers to, and declined to substitute a reconstruction.",
+      "disposition": "deferred",
+      "reason": "Deferred to the same merge-order fix as ARCH-001. Worth recording that this materially degraded the review: two lenses were asked to judge ADR-002's scoping and neither could read it.",
+      "also_raised_by": [
+        "review-security (summary)"
+      ]
+    },
+    {
+      "id": "ARCH-003",
+      "severity": "medium",
+      "file": "docs/handovers/2026-08-17-21-capability-token-handover.md",
+      "line": 55,
+      "title": "The §2.6 exception's trigger condition does not entail the property it rests on",
+      "description": "Rule: api.md §2.6 and data.md §1.4. Evidence: the proposed trigger - \"wherever possession of a secret is the authorization\" - is wrong on both edges. TOO LOOSE: it is true of every bearer-credential endpoint, including ones whose identifier is caller-chosen or sequential, where a uniform 404 conceals nothing and the change is a pure loss of diagnosability. The property that earns the exception is data.md §1.4's unguessable identifier, not the credential. TOO NARROW: naming only the status code licenses the substitution without carrying the three obligations that make it safe - no-store, equal work on the absent-resource path, and the §4.6 traceId - all of which this change implements and none of which a future endpoint copying the rule would be told about.",
+      "disposition": "deferred",
+      "reason": "Deferred to PR #53 with SEC-005. Together these are two independent defects in ADR-002's reasoning found by two different lenses, and that PR asks a reviewer to write the reasoning into api.md permanently. The lens supplied a conjunctive replacement scoping keyed on identifier unguessability and carrying the obligations; that text should be used."
+    },
+    {
+      "id": "ARCH-004",
+      "severity": "medium",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 25,
+      "title": "data.md §4.1/§4.4 - a schema change ships with no migration and no reverse",
+      "description": "Rule: data.md §4.1 and §4.4, plus §4.6 prohibiting schema application from startup code. Evidence: no migration exists; EnsureCreated in the composition root is the only mechanism. The lens judged that recording the deviation is not sufficient on the sources' own terms - README §1.3 names a recorded-not-documented deviation as the wrong shape - while also confirming no STD-DATA rule fires when no migration exists at all, so the deviation is unenforceable by every pack.",
+      "disposition": "deferred",
+      "reason": "Deferred to #49, unchanged from the pre-review decision, which was taken with the user before the code existed and is recorded in the plan, the handover and on #49. The lens's finding that no standards rule can enforce this is carried forward as a pack gap for /workflow-compound to consider."
+    },
+    {
+      "id": "ARCH-005",
+      "severity": "medium",
+      "file": "src/UrlShortener.Domain/ShortLinks/ShortLink.cs",
+      "line": 80,
+      "title": "data.md §1.2 no longer describes what a short-link row carries",
+      "description": "Rule: data.md §1.2 - \"A short link is stored as one row carrying: its code, its destination URL, its creation timestamp, its expiry timestamp where one applies, and its owner identifier where one applies.\" Evidence: TokenHash is not among the five, and §1.2 reads as a definition rather than an open list. The next reader consulting it to learn what the row contains will be told something untrue.",
+      "disposition": "deferred",
+      "reason": "Deferred to PR #53, which is already a gated edit to the same trust boundary. Both amendments should be reviewed together rather than leaving §1.2 to be found stale later."
+    },
+    {
+      "id": "ARCH-006",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 89,
+      "title": "layers.md §1.5 - the endpoint constructed the use case's own outcome instead of invoking it",
+      "description": "Rule: layers.md §1.5 - Entrypoints \"translates transport concerns into use-case invocations and back. It contains no business rule\", and §3.3 on one type per use case. Evidence: on the malformed-code branch the handler authored a DeleteResult for a request DeleteShortLink never saw. The guard itself is permitted; the difference from the redirect route is that this one manufactured an Application type rather than returning a transport result. It mattered because the one path skipping verification was the one Entrypoints decided by itself, and the handover states every future mutation endpoint will copy this shape.",
+      "disposition": "addressed",
+      "reason": "Fixed with COR-002 by moving the guard into the use case.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "COR-003",
+      "severity": "medium",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 27,
+      "title": "CreateResult.ManagementToken defaulted to null - the hazard the plan forbade one type over",
+      "description": "Rule: the plan's step 9 - \"Add the constructor parameter as required - an optional default silently creates links with no credential.\" Evidence: that rule was applied to ShortLink and not to the type carrying the plaintext. The endpoint dereferences with `!` onto a non-nullable string, so a future Created result missing its token would serialise \"managementToken\": null on a 201 rather than throwing.",
+      "disposition": "addressed",
+      "reason": "Fixed by removing the default and passing null explicitly at the two non-Created sites.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "COR-004",
+      "severity": "medium",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 77,
+      "title": "LinkToken.Hash introduces an unhandled ArgumentException guarded only by an implementation's behaviour",
+      "description": "Evidence: ILinkTokenGenerator's contract is only `string Next()`; nothing in the type system or in a test requires 43 base64url characters decoding to 32 bytes. A conforming-but-different generator turns every create into an unhandled exception and a 500 in an ASP.NET-shaped body. Not reachable today - CryptoLinkTokenGenerator satisfies it - but documented as impossible rather than made impossible.",
+      "disposition": "deferred",
+      "reason": "Deferred, no issue. Unreachable today and the lens said so. The throw itself is right and was added deliberately after a real defect during execution - hashing a fallback would have given every malformed token one shared stored hash. Worth noting the alternative fixes are worse than the risk: an interface-conformance test would pin an implementation detail, and a token value type is a larger change than the hazard justifies."
+    },
+    {
+      "id": "COR-005",
+      "severity": "medium",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 79,
+      "title": "The stated justification for bypassing the change tracker was narrower than the code it protects",
+      "description": "Evidence: the comment justified ExecuteDeleteAsync by \"the caller's prior read used AsNoTracking - nothing is tracked to go stale\". Verified: FindAsync does use AsNoTracking, but TryAddAsync leaves its entity tracked on the success path in the same scoped context. The conclusion holds today only because no request path both creates and deletes in one scope, not because of AsNoTracking.",
+      "disposition": "addressed",
+      "reason": "Comment corrected to state the guarantee that actually holds. No behaviour change - the lens found no reachable path today that does both.",
+      "commit": "328f06d"
+    },
+    {
+      "id": "COR-006",
+      "severity": "medium",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 144,
+      "title": "The authorization decision and the delete are not atomic",
+      "description": "Evidence: the credential is read in one round trip and the row removed in another, with no transaction and no condition on the second statement. Exploiting it requires a 1-in-62^7 code collision inside the window, so it is not reachable in practice. The lens downgraded it itself and declined to propose the one-line SQL-predicate fix, citing the convention in this repo that a string hash compared under a case-insensitive collation halves the alphabet - review finding COR-007 on #19.",
+      "disposition": "deferred",
+      "reason": "Deferred to #55. Recorded with the lens's own reasoning intact, including its refusal to propose a fix that would break a documented convention - that restraint is the finding's most useful part."
+    },
+    {
+      "id": "TST-011",
+      "severity": "medium",
+      "file": "tests/UrlShortener.Api.Tests/ShortLinks/ShortLinkEndpointTests.cs",
+      "line": 25,
+      "title": "The endpoint fixture shares one never-reset database, and delete tests are the first to remove rows",
+      "description": "Evidence: one in-memory SQLite connection across all tests in the class with no per-test reset. Assessed rather than assumed: no test asserts a row count and xUnit runs methods in one class serially, so nothing breaks today. The exposure is that the whole-table scans and the counter delta are correct by coincidence rather than design, and the class now both creates and destroys rows - so #22's list endpoint will be the first test coupled to whichever delete tests ran before it.",
+      "disposition": "deferred",
+      "reason": "Deferred to #50. The lens's judgement that it is latent rather than live is recorded, along with its recommendation to fix it before #22 rather than after."
+    }
+  ],
+  "summary": {
+    "by_severity": {
+      "critical": 5,
+      "high": 10,
+      "medium": 10
+    },
+    "by_disposition": {
+      "addressed": 15,
+      "deferred": 9,
+      "open": 1
+    },
+    "criticals_addressed": 4,
+    "criticals_open": 1,
+    "criticals_open_ids": [
+      "SEC-002"
+    ],
+    "gate_note": "SEC-002's serialisation half is OPEN, not deferred: it needs a WVR against STD-SEC-03 with a named approver and expiry, and neither has been supplied. waivers.md treats a waiver missing either as absent rather than weak, so there is nothing for /gate-check to accept. Additionally ARCH-001 and ARCH-002 make PR #53 a merge-order prerequisite, and SEC-005 plus ARCH-003 are two independent defects in the reasoning that PR asks a reviewer to approve into api.md permanently. This review does not decide whether the work ships."
+  },
+  "follow_up_issues": {
+    "50": "Test strength - randomness distribution, create-side log absence, fixture isolation",
+    "53": "ADR-002 and the api.md 2.6 amendment - now also carrying SEC-005, ARCH-003, ARCH-005",
+    "55": "Delete-path concurrency and the TryDeleteAsync contract",
+    "56": "Rate limiting on the delete endpoint",
+    "57": "Idempotent create so a lost token is recoverable"
+  }
+}
