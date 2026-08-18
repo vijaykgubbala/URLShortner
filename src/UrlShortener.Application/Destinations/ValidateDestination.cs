@@ -11,7 +11,8 @@ public enum DestinationRefusal
     SchemeNotPermitted,
     HostNotResolved,
     ResolutionFailed,
-    AddressNotPermitted
+    AddressNotPermitted,
+    UserInfoNotPermitted
 }
 
 /// <summary>
@@ -22,9 +23,18 @@ public enum DestinationRefusal
 /// silently change a wire contract that <c>api.md §4.2</c> says must not change once
 /// published.
 /// </summary>
-public sealed record DestinationValidationResult(bool IsPermitted, DestinationRefusal Refusal)
+public sealed record DestinationValidationResult(
+    bool IsPermitted,
+    DestinationRefusal Refusal,
+    string? NormalisedUrl = null)
 {
-    public static DestinationValidationResult Permitted() => new(true, DestinationRefusal.None);
+    /// <summary>
+    /// Carries the normalised destination the Domain actually judged. Callers persist
+    /// this, never the caller's raw string — otherwise the value validated and the value
+    /// later emitted in a Location header are different strings.
+    /// </summary>
+    public static DestinationValidationResult Permitted(string? normalisedUrl) =>
+        new(true, DestinationRefusal.None, normalisedUrl);
 
     public static DestinationValidationResult Refused(DestinationRefusal refusal) =>
         new(false, refusal);
@@ -61,7 +71,7 @@ public sealed class ValidateDestination(
         {
             return Record(
                 DestinationValidationResult.Refused(DestinationRefusal.NotAbsoluteUrl),
-                rawUrl: null,
+                host: null,
                 resolution: null);
         }
 
@@ -71,7 +81,7 @@ public sealed class ValidateDestination(
 
         if (!schemeVerdict.IsPermitted)
         {
-            return Record(Translate(schemeVerdict.Rejection), rawUrl, resolution: null);
+            return Record(Translate(schemeVerdict.Rejection, null), host: null, resolution: null);
         }
 
         var host = new Uri(rawUrl!).Host;
@@ -81,7 +91,7 @@ public sealed class ValidateDestination(
         // architecture-advisor raised against an earlier shape of this method.
         var verdict = DestinationPolicy.CheckFully(rawUrl, resolution);
 
-        return Record(Translate(verdict.Rejection), rawUrl, resolution);
+        return Record(Translate(verdict.Rejection, verdict.NormalisedUrl), host, resolution);
     }
 
     /// <summary>
@@ -95,7 +105,7 @@ public sealed class ValidateDestination(
     /// </summary>
     private DestinationValidationResult Record(
         DestinationValidationResult result,
-        string? rawUrl,
+        string? host,
         HostResolution? resolution)
     {
         if (result.IsPermitted)
@@ -109,20 +119,25 @@ public sealed class ValidateDestination(
             ? string.Join(", ", resolved.Addresses)
             : "(not resolved)";
 
-        logger?.Log(
-            LogLevel.Warning,
+        // The host and the resolved addresses, never the submitted URL. STD-SEC-04 forbids
+        // a full request payload as a log argument, and CreateShortLinkRequest has exactly
+        // one member — so logging the destination logs the whole body of an unauthenticated
+        // POST, including whatever the submitter put in its query string.
+        logger?.LogWarning(
             Rejected,
             "Destination refused. Reason: {Reason}. Host: {Host}. Addresses: {Addresses}.",
-            null,
-            (state, _) => $"Destination refused. Reason: {result.Refusal}. " +
-                          $"Url: {rawUrl}. Addresses: {addresses}.");
+            result.Refusal,
+            host ?? "(not parsed)",
+            addresses);
 
         return result;
     }
 
-    private static DestinationValidationResult Translate(DestinationRejection rejection) =>
+    private static DestinationValidationResult Translate(
+        DestinationRejection rejection,
+        string? normalisedUrl) =>
         rejection == DestinationRejection.None
-            ? DestinationValidationResult.Permitted()
+            ? DestinationValidationResult.Permitted(normalisedUrl)
             : DestinationValidationResult.Refused(rejection switch
             {
                 DestinationRejection.NotAbsoluteUrl => DestinationRefusal.NotAbsoluteUrl,
@@ -130,6 +145,7 @@ public sealed class ValidateDestination(
                 DestinationRejection.HostNotResolved => DestinationRefusal.HostNotResolved,
                 DestinationRejection.ResolutionFailed => DestinationRefusal.ResolutionFailed,
                 DestinationRejection.AddressNotPermitted => DestinationRefusal.AddressNotPermitted,
+                DestinationRejection.UserInfoNotPermitted => DestinationRefusal.UserInfoNotPermitted,
                 _ => throw new ArgumentOutOfRangeException(nameof(rejection), rejection, null)
             });
 }

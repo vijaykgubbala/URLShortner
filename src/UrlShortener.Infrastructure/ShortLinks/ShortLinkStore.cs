@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using UrlShortener.Application.ShortLinks;
 using UrlShortener.Domain.ShortLinks;
@@ -33,15 +34,33 @@ public sealed class EfShortLinkRepository(ShortLinkDbContext db) : IShortLinkRep
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             return true;
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (IsUniquenessViolation(ex))
         {
             // The database rejected the code as a duplicate. Two concurrent creates race
             // here rather than at a check-then-insert, which is the point: only one wins,
             // and the loser retries with a new code instead of failing the request.
+            //
+            // The filter matters as much as the catch. DbUpdateException wraps every
+            // SaveChanges failure — a dropped connection, a full disk, SQLITE_BUSY, a
+            // concurrency conflict — and returning false for those reports "this code is
+            // taken", so the caller retries a failing write five times and then tells the
+            // operator the 62^7 code space is exhausted. Every other fault propagates.
             db.Entry(link).State = EntityState.Detached;
             return false;
         }
     }
+
+    /// <summary>
+    /// A genuine PRIMARY KEY or UNIQUE violation, and nothing else. SQLITE_CONSTRAINT is
+    /// 19; the extended codes distinguish which constraint failed
+    /// (1555 = PRIMARY KEY, 2067 = UNIQUE).
+    /// </summary>
+    private static bool IsUniquenessViolation(DbUpdateException ex) =>
+        ex.InnerException is SqliteException
+        {
+            SqliteErrorCode: 19,
+            SqliteExtendedErrorCode: 1555 or 2067
+        };
 
     public Task<ShortLink?> FindAsync(string code, CancellationToken cancellationToken) =>
         db.ShortLinks.AsNoTracking().FirstOrDefaultAsync(l => l.Code == code, cancellationToken);
@@ -53,15 +72,16 @@ public sealed class EfShortLinkRepository(ShortLinkDbContext db) : IShortLinkRep
 /// </summary>
 public sealed class CryptoShortCodeGenerator : IShortCodeGenerator
 {
-    private const string Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
     public string Next()
     {
         var chars = new char[ShortLink.CodeLength];
 
         for (var i = 0; i < chars.Length; i++)
         {
-            chars[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
+            // The alphabet is the Domain's, not this class's — the boundary guard in
+            // Entrypoints and this generator must agree by construction, not by copy.
+            chars[i] = ShortLink.CodeAlphabet[
+                RandomNumberGenerator.GetInt32(ShortLink.CodeAlphabet.Length)];
         }
 
         return new string(chars);

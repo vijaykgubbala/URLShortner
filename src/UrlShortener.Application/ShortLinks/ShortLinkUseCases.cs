@@ -47,9 +47,15 @@ public sealed class CreateShortLink(
             return new CreateResult(CreateOutcome.DestinationRefused, null, validation.Refusal);
         }
 
+        // The normalised form the Domain judged, never the caller's raw string: Uri
+        // .AbsoluteUri is percent-encoded and ASCII, so what is stored is emittable in a
+        // Location header by construction. Storing the raw text means the value checked
+        // and the value later redirected to are different strings.
+        var destinationToStore = validation.NormalisedUrl!;
+
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            var link = new ShortLink(codes.Next(), destination!, clock.GetUtcNow());
+            var link = new ShortLink(codes.Next(), destinationToStore, clock.GetUtcNow());
 
             if (await repository.TryAddAsync(link, cancellationToken).ConfigureAwait(false))
             {

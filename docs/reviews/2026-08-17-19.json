@@ -1,0 +1,320 @@
+{
+  "metadata": {
+    "timestamp": "2026-08-17T00:00:00Z",
+    "issue": 19,
+    "branch": "fix/19-review-remediation",
+    "base_commit": "fcae5b3",
+    "remediation_commit": "a24e8f6",
+    "standards_version": "standards@2026.08.1",
+    "execution_mode": "TDD (nominal only - production code was written before its tests; no test was observed to fail first)",
+    "handover": null,
+    "handover_note": "No handover document exists. /workflow-handover was skipped under fast mode, so the reviewers were given no pre-established blast radius and no declared untested-gap list; each was told so explicitly and asked to derive it.",
+    "files_reviewed": [
+      "src/UrlShortener.Domain/ShortLinks/ShortLink.cs",
+      "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "src/UrlShortener.Api/Program.cs",
+      "tests/UrlShortener.Api.Tests/ShortLinks/ShortLinkEndpointTests.cs",
+      "tests/UrlShortener.Application.Tests/ShortLinks/ShortLinkUseCaseTests.cs"
+    ],
+    "agents_run": [
+      "review-correctness",
+      "review-security",
+      "review-testing",
+      "review-architecture"
+    ],
+    "agents_skipped": [],
+    "agents_failed": [],
+    "raw_finding_count": 43,
+    "deduplicated_finding_count": 36,
+    "recorded_finding_count": 22,
+    "recording_note": "43 raw findings deduplicated to 36 where lenses named the same defect. This record carries the 22 dispositioned individually; the remaining mediums are carried on issues #49 and #50 and named in their acceptance criteria. COR-002 and TST-005 were deliberately NOT merged despite sharing a line - one says the catch is wrong, the other says it is untested.",
+    "verification_note": "Three lenses reasoned about .NET Uri parsing without executing it. Probed directly before recording: the userinfo bypass is confirmed; SEC-003 stated mechanism is wrong (the parser preserves and percent-encodes CR/LF rather than discarding them); and the remedy COR-001 and SEC-003 both proposed - persist AbsoluteUri - does not fix SEC-002, because AbsoluteUri preserves userinfo verbatim. Applying the shared fix alone would have closed two of three while appearing to close all.",
+    "citation_note": "review-architecture cited several line numbers that do not resolve (a test file line 570 in a 194-line file; use-case lines 218-249 in a 117-line file). The quoted code was verified present in each named file; the line numbers were corrected or dropped rather than copied forward.",
+    "changed_assertion": "tests/UrlShortener.Domain.Tests/Destinations/SchemeTests.cs - the InlineData case for a credential-bearing https URL asserted that destination was permitted, pinning the SEC-002 defect. Moved to a new test asserting the refusal rather than deleted, because its original purpose - proving credentials do not change the scheme - is still true and still worth asserting.",
+    "mutation_proofs": [
+      "Restoring the blanket catch filter fails A_non_uniqueness_persistence_fault_is_not_reported_as_a_collision, and only that test.",
+      "Removing the Detached assignment fails A_fresh_code_still_succeeds_after_a_collision, and only that test."
+    ],
+    "test_counts": {
+      "before": 150,
+      "after": 175
+    }
+  },
+  "findings": [
+    {
+      "id": "SEC-002",
+      "severity": "critical",
+      "file": "src/UrlShortener.Domain/Destinations/DestinationPolicy.cs",
+      "line": 221,
+      "title": "STD-SEC-05 - a userinfo component makes the Location header misrepresent the host",
+      "description": "Rule: STD-SEC-05 - \"A user-supplied or stored destination URL must be validated against an allowlist of permitted schemes and hosts immediately before issuing a redirect or server-side request.\" Evidence: the only host check was `return string.IsNullOrEmpty(uri.Host) ? DestinationRejection.NotAbsoluteUrl : DestinationRejection.None;` and UserInfo appeared nowhere in src/. Verified by execution: `https://www.paypal.com@evil.example/login` parses with Host=evil.example, UserInfo=www.paypal.com, and CheckScheme returned IsPermitted=True.",
+      "disposition": "addressed",
+      "reason": "Fixed. DestinationRejection.UserInfoNotPermitted added and refused on both paths. Note the remedy proposed for COR-001 does not cover this: Uri.AbsoluteUri preserves userinfo verbatim, verified by execution, so normalising alone would have left this open while appearing to close it.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "COR-001",
+      "severity": "critical",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 52,
+      "title": "The value validated is not the value stored or emitted",
+      "description": "Rule: STD-SEC-05 detection hint - \"A redirect result, Location header assignment ... constructed from a value that came from a request parameter or a persisted record, with no scheme and host check on the path between them.\" Evidence: CheckScheme discarded its parse (`=> new(RejectionFor(rawUrl, out _))`), ShortLinkUseCases.cs:52 stored the raw string, ShortLinkEndpoints.cs:57 emitted it. Verified: a destination with an accented path is permitted and stored raw; Kestrel refuses a non-ASCII response header, so a link created with 201 then fails on every visit.",
+      "disposition": "addressed",
+      "reason": "Fixed. The policy now carries the normalised AbsoluteUri on a permitted verdict and null on a refused one, and CreateShortLink persists that. Corroborated by review-security as SEC-003 - whose stated mechanism was wrong (it claimed the Uri parser silently discards CR, LF and TAB; execution shows it preserves and percent-encodes them). The defect is real, the reason given was not.",
+      "commit": "a24e8f6",
+      "also_raised_by": [
+        "review-security SEC-003"
+      ]
+    },
+    {
+      "id": "COR-002",
+      "severity": "critical",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 36,
+      "title": "catch (DbUpdateException) reports every persistence fault as a code collision",
+      "description": "Rule: STD-OPS-06 - \"Every call leaving the process must specify an explicit timeout and, where retried, a bounded retry count with backoff\", detection hint \"a retry policy with no maximum attempt count or no backoff between attempts\". Evidence: an unfiltered catch returning false, against an interface contract documented as \"Returns false if the code is already taken.\" A dropped connection, a full disk, SQLITE_BUSY and DbUpdateConcurrencyException all returned false, driving five immediate retries and a log line telling the operator a 62^7 code space was exhausted.",
+      "disposition": "addressed",
+      "reason": "Fixed with an exception filter matching SQLITE_CONSTRAINT 19 extended 1555/2067 only; everything else propagates. Backoff not added - the retry is against a local uniqueness collision, not a failing dependency, and with the filter in place a fault no longer loops. The lens explicitly cleared the change-tracker handling as correct.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "SEC-001",
+      "severity": "critical",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 48,
+      "title": "STD-SEC-02 - an unvalidated route value reaches persistence",
+      "description": "Rule: STD-SEC-02 - \"Every value that originates outside the process must be validated for type, range, length, and format at the point it enters the system, before it reaches any domain or persistence code\", detection hint \"route value ... Especially: values passed straight into a repository call.\" Evidence: MapGet with an unconstrained /{code} template, handler body opening with the use-case call, reaching FirstOrDefaultAsync. review-correctness added that the template captured every one-segment GET, so /favicon.ico and /robots.txt became queries inside the 50 ms p99 budget.",
+      "disposition": "addressed",
+      "reason": "Fixed. ShortLink.CodeAlphabet and IsWellFormedCode moved the format into Domain; the route length constraint and the generator both derive from the domain constants, so the boundary check cannot drift from what is minted. Also closes the route-swallowing half of ARCH-003.",
+      "commit": "a24e8f6",
+      "also_raised_by": [
+        "review-correctness COR-005"
+      ]
+    },
+    {
+      "id": "SEC-004",
+      "severity": "critical",
+      "file": "standards/waivers.md",
+      "line": 63,
+      "title": "WVR-001 follow-up issue is closed without the remedy being delivered",
+      "description": "Rule: standards/waivers.md:33 - the Follow-up issue field is \"The issue number tracking the work that removes the need for this waiver.\" Evidence: WVR-001 named #19, which shipped the scheme half only and closed. The lens confirmed the waiver is formally valid and that what shipped is inside its scope - the defect is that its remedy is now spent, so nothing tracks removal before the 2026-11-17 expiry, at which point per waivers.md:17 the rule is in force again and the gate blocks.",
+      "disposition": "addressed",
+      "reason": "Fixed. Issue #47 opened for the cached-verdict re-check; WVR-001 Follow-up field repointed to it with a dated amendment note recording that #19 closed without implementing the re-check, so the history shows the remedy was deferred a second time rather than delivered.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "TST-005",
+      "severity": "critical",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 36,
+      "title": "AC #18.2 duplicate-key clause has no test that can fail",
+      "description": "AC quoted: \"Two concurrent creates produce two distinct codes and neither fails on a duplicate key.\" Evidence: the endpoint test fires 8 requests at a 62^7 code space - collision probability about 1e-11 - and its own doc comment concedes it does not force a collision; deleting the retry loop leaves it passing. The unit test forces a collision against a Dictionary, not against the component that decides one occurred. tests/UrlShortener.Infrastructure.Tests contained only Dns/DnsHostResolverTests.cs.",
+      "disposition": "addressed",
+      "reason": "Fixed. Four repository tests added against real SQLite and the real unique constraint. Kept separate from COR-002 despite sharing a line: one says the catch is wrong, the other says it is untested, and merging would have lost one. Both new tests verified by mutation. The first draft of these tests was itself wrong, reusing one DbContext so EF change tracker rejected the duplicate in memory before the constraint could speak; corrected to one context per repository, matching the scoped production lifetime.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "TST-003",
+      "severity": "critical",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 90,
+      "title": "AC #19.5 log-event half is unasserted",
+      "description": "AC quoted: \"Given a resolve failure, when it occurs, then a structured log event redirect.resolve.failed is emitted AND the redirect_failures counter increments.\" Evidence: the only covering test asserted counter.Total > before, and the string redirect.resolve.failed appeared in no test file. Deleting the LogWarning left all 12 tests green.",
+      "disposition": "addressed",
+      "reason": "Fixed using the RecordingLogger pattern the repo already had for #17, asserting exactly one event plus the exact counter value, with a negative twin asserting a successful resolve emits nothing.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "TST-004",
+      "severity": "critical",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 61,
+      "title": "AC #18.5 log-event half is unasserted",
+      "description": "AC quoted: \"A create failure emits link.create.failed and increments link_create_failures.\" Evidence: the covering test asserted the counter exactly but could not observe the log - its helper hard-coded null in the ILogger position. Deleting the LogError left all 12 tests green.",
+      "disposition": "addressed",
+      "reason": "Fixed. The helper now accepts a logger; the exhaustion test asserts the event fires exactly once, with a negative twin on the success path.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "TST-001",
+      "severity": "critical",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 48,
+      "title": "AC #19.4 - 50 ms p99 at 100 rps over 10,000 links - has no test of any kind",
+      "description": "AC quoted in full. Evidence: a repo-wide search for p99, Stopwatch, Benchmark, rps and latency across tests/ returns only unrelated matches. STD-OPS-01: \"A number is the only form of the requirement that can fail.\" Here it cannot fail, because nothing evaluates it - and WVR-001 cites this budget as the reason STD-SEC-05 address check is waived, so a security control was traded for an unmeasured number.",
+      "disposition": "deferred",
+      "reason": "Deferred to #48. A genuine p99 measurement needs 10,000 seeded rows and a load generator driving sustained concurrency; it cannot be produced in this session, and a test that asserted the budget without generating the load would be worse than none - it would report the criterion proven. #48 carries the AC that the exclusion itself must be waived with an expiry if the measurement is later judged too variable for CI. Recorded as blocking: gate-check criterion 2 should stop on this."
+    },
+    {
+      "id": "TST-002",
+      "severity": "critical",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 17,
+      "title": "AC #18.4 - 200 ms p99 on create - has no test of any kind",
+      "description": "AC quoted in full: \"Under 200 ms at p99.\" Evidence: no measurement anywhere. The create path performs a synchronous DNS resolution behind a 2-second timeout and up to 5 insert attempts, all sitting behind a 200 ms budget, and every endpoint test replaces the resolver with a stub returning a completed Task synchronously - so even the real dependency timing characteristics are absent from the harness.",
+      "disposition": "deferred",
+      "reason": "Deferred to #48, same reason as TST-001. #48 additionally carries an AC asserting the relationship between the 2-second DNS timeout and the 200 ms budget, which is checkable without a load generator and would have made the contradiction visible."
+    },
+    {
+      "id": "H1-503-STATUS",
+      "severity": "high",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 38,
+      "title": "The 503 for code exhaustion carries a body whose own status field says 400",
+      "description": "Rule: api.md 4.2 - \"status matches the HTTP status code.\" Evidence: DestinationProblem.Invalid returned under statusCode 503, where Invalid hard-codes 400, type invalid-request, and a fabricated field error against destination for a request whose destination had already passed validation. A client reading the body stopped retrying; a client reading the status line retried. Both conforming.",
+      "disposition": "addressed",
+      "reason": "Fixed with a DestinationProblem.Unavailable factory returning 503, and the call site now takes its status from the problem. Raised independently by three lenses - review-testing TST-010, review-correctness COR-003, review-architecture ARCH-005 - which is corroboration rather than three defects. Endpoint-level proof deferred to #50; the unit test pins the status agreement.",
+      "commit": "a24e8f6",
+      "also_raised_by": [
+        "review-testing TST-010",
+        "review-correctness COR-003",
+        "review-architecture ARCH-005"
+      ]
+    },
+    {
+      "id": "SEC-006",
+      "severity": "high",
+      "file": "src/UrlShortener.Application/Destinations/ValidateDestination.cs",
+      "line": 117,
+      "title": "STD-SEC-04 - the full request payload is logged on every refusal",
+      "description": "Rule: STD-SEC-04 - \"Log statements must not receive personal data, user identifiers, or full request payloads as arguments; correlate with an opaque request or trace identifier instead.\" Evidence: the formatter interpolated the raw URL, and CreateShortLinkRequest has exactly one member - so this logged the entire body of an unauthenticated POST including any query string the submitter chose. The structured template declared three placeholders but passed no argument array, so the URL escaped only through the rendered message.",
+      "disposition": "addressed",
+      "reason": "Fixed. Logs the parsed host and the resolved addresses as structured arguments; the submitted URL no longer enters the log pipeline. This file is not in the #19 diff - the lens raised it against this change because #18 is what first made it reachable by an anonymous caller who chooses its contents, which is the correct call.",
+      "commit": "a24e8f6"
+    },
+    {
+      "id": "TST-012",
+      "severity": "high",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 54,
+      "title": "The short code generator has no test; its security property is unasserted",
+      "description": "Rule: STD-SEC-06 - \"Each threat named in a story, ADR, or review finding must be paired with an automated test asserting that the attack fails.\" The enumeration threat is named in the solution plan and again in the generator own comment. Evidence: no test file references CryptoShortCodeGenerator; the only observed property is length. Substituting Random.Shared or an incrementing counter passes every existing assertion - a sequence is more distinct than random, so the concurrency test actively cannot catch it.",
+      "disposition": "deferred",
+      "reason": "Deferred to #50, which carries the AC that a sequential or seeded generator must fail the test. Not fixed here because the generator is correct as written - this is a missing proof, not a defect, and the remediation pass was scoped to defects plus the ACs that block the gate.",
+      "also_raised_by": [
+        "review-security SEC-005"
+      ]
+    },
+    {
+      "id": "ARCH-001",
+      "severity": "high",
+      "file": "src/UrlShortener.Infrastructure/UrlShortener.Infrastructure.csproj",
+      "line": 9,
+      "title": "STD-ARCH-06 - EF Core over SQLite is a new persistence technology with no ADR",
+      "description": "Rule: STD-ARCH-06 - \"Introducing a transport, persistence technology, messaging pattern, or third-party integration style not already used in this repo requires an accepted ADR-nnn in decisions/ before the code merges\", detection hint \"A new package dependency providing transport, queuing, caching, or storage.\" Evidence: Microsoft.EntityFrameworkCore.Sqlite added; decisions/ holds only ADR-001, scoped to the outbound port shape. The ORM, provider, file-backed connection default, code-first-over-migrations and the DbUpdateException detection strategy all shipped with no recorded rationale.",
+      "disposition": "deferred",
+      "reason": "Deferred to #49. Writing the ADR after the fact is the honest sequence here - the rule says before the code merges, and that has already been missed; recording it now with the decisions as they actually stand is worth more than backdating one. #49 also carries the migration work, since the two decisions are the same decision."
+    },
+    {
+      "id": "COR-004",
+      "severity": "high",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 78,
+      "title": "A repository exception on the redirect path emits no event and moves no counter",
+      "description": "AC #19.5 quoted: \"Given a resolve failure, when it occurs, then a structured log event redirect.resolve.failed is emitted and the redirect_failures counter increments.\" Evidence: FindAsync is unguarded and the instrumentation sits only inside the policy branch, so a database outage propagates to a 500 with redirect_failures reading zero - the metric built to make resolution failure visible reads healthy during a total outage of resolution.",
+      "disposition": "deferred",
+      "reason": "Deferred to #51, alongside the exporter work - the counter is unreadable outside the process today, so widening what increments it changes nothing an operator can see until that lands. Recorded as the strongest of the deferred findings: this is the one where the deferral has real operational cost rather than only proof cost."
+    },
+    {
+      "id": "ARCH-002",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/Program.cs",
+      "line": 36,
+      "title": "Schema is created by startup code, with no migration and no reverse step",
+      "description": "Rule: architecture/data.md 4.6 - \"Applying migrations from application startup code is prohibited, because it couples schema state to instance scaling.\" Evidence: a Database.EnsureCreated() block in the composition root, which is also executable logic in the file layers.md 2.3 restricts to registration. EnsureCreated does nothing against an existing database, so the next added column will not apply, will not error at deploy, and surfaces as a missing-column error in production. Microsoft.EntityFrameworkCore.Design was added in the same change and not used.",
+      "disposition": "deferred",
+      "reason": "Deferred to #49. The lens capped this at suggestion because migrations are STD-DATA territory rather than its own pack, and flagged that it may carry blocking severity under the data lens - that judgment is recorded here rather than silently accepted, and #49 treats it as blocking.",
+      "also_raised_by": [
+        "review-correctness COR-010"
+      ]
+    },
+    {
+      "id": "ARCH-003",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 48,
+      "title": "STD-ARCH-03 - the redirect route has no version prefix and api.md 1.4 does not exempt it",
+      "description": "Rule: STD-ARCH-03 - \"Every HTTP route must begin with a version prefix and use kebab-case plural nouns, with no verbs in the path.\" Evidence: an unversioned /{code} route with a source comment claiming api.md 1.4 as authority. 1.4 exempts the redirect endpoint from being the domain API; it says nothing about versioning, and api.md 2.1 says a route with no version prefix must not be added.",
+      "disposition": "deferred",
+      "reason": "The route-swallowing half is addressed by SEC-001 constraint. The versioning half is deferred without an issue: a short URL is the one route that can never change once handed out, which makes an unversioned path defensible - but the exemption is currently asserted only in a source comment, and recording it properly means a gated edit to api.md, which is out of scope for a remediation pass. Left open deliberately rather than closed."
+    },
+    {
+      "id": "ARCH-004",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/Program.cs",
+      "line": 41,
+      "title": "The browser-facing redirect and the domain API share one origin",
+      "description": "Rule: api.md 1.2 - \"No browser-originated request may reach the domain API.\" Evidence: MapShortLinks maps both surfaces into one application, and the create handler publishes that origin to callers as the short-link base via http.Request.Host. Every short link points a browser at the origin on which /v1/short-links is reachable.",
+      "disposition": "deferred",
+      "reason": "Deferred, no issue. The lens correctly noted the sources do not state whether dedicated in 1.4 means a separate route or a separate deployable, and raised it for a decision rather than as a settled breach. Nothing on the domain API is browser-abusable yet; WS-3 adds token-authorized mutation to the same origin, which is when this must be decided. Flagged for the WS-3 intake rather than resolved here."
+    },
+    {
+      "id": "COR-007",
+      "severity": "medium",
+      "file": "src/UrlShortener.Infrastructure/ShortLinks/ShortLinkStore.cs",
+      "line": 15,
+      "title": "Case-sensitive codes with no collation pinned - a provider change redirects to the wrong destination",
+      "description": "Evidence: the alphabet is case-sensitive, so two codes differing only in case are independently allocatable, but the key declaration pins no collation and the lookup is plain equality. Correct on SQLite, whose default is BINARY. On SQL Server stock case-insensitive collation the same code resolves one code to another destination - a wrong redirect with no error - and rejects roughly half of validly generated codes as duplicates.",
+      "disposition": "deferred",
+      "reason": "Deferred to #49, which carries the AC that a case-differing code must not resolve. The best of the medium findings: no test would fail today, every test round-trips a code it was just handed, and the connection string is already configuration-driven so a provider swap is on the expected path."
+    },
+    {
+      "id": "COR-009",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/ShortLinks/ShortLinkEndpoints.cs",
+      "line": 35,
+      "title": "The endpoint calls From, which throws on None; the guarded FromOrNull written for that case is unused",
+      "description": "Rule: api.md 4.3 - \"An error body must not contain a stack trace, an exception type name, a SQL fragment, a file path, a connection string, or an internal host name.\" Evidence: DestinationProblem.From has no arm for None and throws ArgumentOutOfRangeException, which escaping a handler produces a 500 carrying the value. Unreachable today by an invariant held by convention - DestinationValidationResult has a public positional constructor, so a refused-with-None result compiles anywhere.",
+      "disposition": "deferred",
+      "reason": "Deferred, no issue. Unreachable today and the lens said so. Worth noting that the new UserInfoNotPermitted arm added in this pass is exactly the future-refusal-reason case it warns about - that arm was added, and the existing test iterating every enum value would have caught its absence."
+    },
+    {
+      "id": "COR-013",
+      "severity": "medium",
+      "file": "src/UrlShortener.Api/Program.cs",
+      "line": 15,
+      "title": "No command timeout on any database call, on a path with a 50 ms p99 budget",
+      "description": "Rule: STD-OPS-06, detection hint \"An HTTP client, database command, or message publish constructed without a timeout value.\" Evidence: UseSqlite with no CommandTimeout, and neither call site sets one - against ADR-001 explicitly bounded DNS resolver two lines below, which received a decision and a citation. Severity in the pack is high.",
+      "disposition": "deferred",
+      "reason": "Deferred to #49. The lens rated it suggestion from the correctness angle because it degrades rather than falsifies, while noting the pack rates it high and that the operability reviewer should grade it on the standard scale - recorded at the pack severity rather than the lens."
+    },
+    {
+      "id": "TST-014",
+      "severity": "medium",
+      "file": "src/UrlShortener.Application/ShortLinks/ShortLinkUseCases.cs",
+      "line": 88,
+      "title": "AC #19.3 is proven for the scheme half of the policy only",
+      "description": "AC quoted: \"Given a stored destination the allowlist policy now rejects, when the code is requested, then the redirect is refused with 410 and no Location header is sent.\" The policy is two checks; the redirect path calls only CheckScheme. Both covering tests seed scheme-refused destinations.",
+      "disposition": "ignored",
+      "reason": "Not a finding. WVR-001 waives exactly this, unexpired, and states the testing consequence itself: the DNS-rebinding threat has no negative test and cannot have one while this waiver stands, because there is no second check to fail closed. Both review-testing and review-security independently declined to raise it as a gap and recorded it for visibility instead, which is the correct handling. Recorded here so gate-check sees the AC partial state rather than reading it as fully covered."
+    }
+  ],
+  "summary": {
+    "by_severity": {
+      "critical": 10,
+      "high": 10,
+      "medium": 16
+    },
+    "by_disposition_recorded": {
+      "addressed": 9,
+      "deferred": 12,
+      "ignored": 1
+    },
+    "criticals_addressed": 8,
+    "criticals_deferred": 2,
+    "criticals_deferred_ids": [
+      "TST-001",
+      "TST-002"
+    ],
+    "gate_note": "Two critical findings remain deferred without a waiver. Per _shared/references/conventions.md, critical always blocks and the only override is a written waiver with an expiry - so gate-check criterion 2 should BLOCK on issue #19 until #48 lands or a waiver is written. This review does not decide whether the work ships."
+  },
+  "follow_up_issues": {
+    "47": "Redirect-path address re-check behind a cached verdict - replaces #19 as WVR-001 follow-up",
+    "48": "Measure the create and redirect latency budgets - carries the two deferred criticals",
+    "49": "Persistence ADR, migrations, collation, command timeout",
+    "50": "Strengthen the #18/#19 tests against surviving mutations",
+    "51": "Export the failure counters"
+  }
+}

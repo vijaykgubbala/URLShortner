@@ -11,7 +11,15 @@ public enum DestinationRejection
     SchemeNotPermitted,
     HostNotResolved,
     ResolutionFailed,
-    AddressNotPermitted
+    AddressNotPermitted,
+
+    /// <summary>
+    /// The authority carries a userinfo component. `https://www.paypal.com@evil.example/`
+    /// has a Host of `evil.example`, so every host and address rule judges the right
+    /// target — while the part a human reads in the Location header says otherwise.
+    /// Refused because that gap is the phishing hop STD-SEC-05 exists to prevent.
+    /// </summary>
+    UserInfoNotPermitted
 }
 
 /// <summary>
@@ -19,13 +27,13 @@ public enum DestinationRejection
 /// <see cref="FullVerdict"/> so a caller cannot pass a partially checked destination
 /// where a fully checked one is required — that mistake fails open.
 /// </summary>
-public sealed record SchemeVerdict(DestinationRejection Rejection)
+public sealed record SchemeVerdict(DestinationRejection Rejection, string? NormalisedUrl = null)
 {
     public bool IsPermitted => Rejection == DestinationRejection.None;
 }
 
 /// <summary>The result of checking scheme and every resolved address.</summary>
-public sealed record FullVerdict(DestinationRejection Rejection)
+public sealed record FullVerdict(DestinationRejection Rejection, string? NormalisedUrl = null)
 {
     public bool IsPermitted => Rejection == DestinationRejection.None;
 }
@@ -40,7 +48,12 @@ public static class DestinationPolicy
     /// Checks the scheme alone. Used on the redirect path, which cannot afford a DNS
     /// lookup against its 50 ms p99 budget.
     /// </summary>
-    public static SchemeVerdict CheckScheme(string? rawUrl) => new(RejectionFor(rawUrl, out _));
+    public static SchemeVerdict CheckScheme(string? rawUrl)
+    {
+        var rejection = RejectionFor(rawUrl, out var uri);
+
+        return new SchemeVerdict(rejection, Normalise(rejection, uri));
+    }
 
     /// <summary>
     /// Checks the scheme and every resolved address. Used at creation, where the cost of
@@ -48,7 +61,7 @@ public static class DestinationPolicy
     /// </summary>
     public static FullVerdict CheckFully(string? rawUrl, HostResolution resolution)
     {
-        var schemeRejection = RejectionFor(rawUrl, out _);
+        var schemeRejection = RejectionFor(rawUrl, out var uri);
 
         if (schemeRejection != DestinationRejection.None)
         {
@@ -64,7 +77,7 @@ public static class DestinationPolicy
                 new FullVerdict(DestinationRejection.HostNotResolved),
 
             HostResolution.Resolved resolved =>
-                new FullVerdict(JudgeAddresses(resolved.Addresses)),
+                FullVerdictFor(JudgeAddresses(resolved.Addresses), uri),
 
             HostResolution.NotFound => new FullVerdict(DestinationRejection.HostNotResolved),
 
@@ -218,10 +231,35 @@ public static class DestinationPolicy
             return DestinationRejection.SchemeNotPermitted;
         }
 
-        return string.IsNullOrEmpty(uri.Host)
-            ? DestinationRejection.NotAbsoluteUrl
-            : DestinationRejection.None;
+        if (string.IsNullOrEmpty(uri.Host))
+        {
+            return DestinationRejection.NotAbsoluteUrl;
+        }
+
+        // Checked after the host, because a userinfo component is only meaningful once
+        // there is an authority to precede. Uri.Host for
+        // "https://www.paypal.com@evil.example/" is "evil.example", so every rule below
+        // judges the correct target — and the Location header still reads as paypal.com.
+        return string.IsNullOrEmpty(uri.UserInfo)
+            ? DestinationRejection.None
+            : DestinationRejection.UserInfoNotPermitted;
     }
+
+    /// <summary>
+    /// The normalised, percent-encoded form of a permitted destination — and null for a
+    /// refused one, so a refused URL can never be mistaken for a storable value.
+    ///
+    /// This is what callers must persist and emit. <c>Uri.AbsoluteUri</c> is ASCII by
+    /// construction, so a destination containing an accented path or a CR/LF sequence
+    /// becomes an escaped string that is safe in a <c>Location</c> header. Storing the
+    /// caller's raw text instead means the value judged and the value emitted are
+    /// different strings — which is the gap STD-SEC-05's detection hint describes.
+    /// </summary>
+    private static string? Normalise(DestinationRejection rejection, Uri? uri) =>
+        rejection == DestinationRejection.None ? uri?.AbsoluteUri : null;
+
+    private static FullVerdict FullVerdictFor(DestinationRejection rejection, Uri? uri) =>
+        new(rejection, Normalise(rejection, uri));
 
     private static bool IsPermittedScheme(string scheme) =>
         scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
