@@ -4,6 +4,33 @@ using System.Security.Cryptography;
 namespace UrlShortener.Domain.ShortLinks;
 
 /// <summary>
+/// Verifies a presented token against a stored hash.
+///
+/// This interface exists for one reason: to make the constant-work property *provable*.
+/// <see cref="LinkToken.Verify"/> deliberately hashes and compares on every path, including
+/// when no link was found — because an early return there would make an unknown code
+/// measurably faster than a wrong token, leaking through timing what the identical 404
+/// conceals (<c>ADR-002</c>).
+///
+/// An early return is *behaviourally identical* — same outcome, same status, same body —
+/// so no outcome-based test can catch its absence. A seam can: a counting fake proves the
+/// use case reached verification even when the code did not exist. One interface with one
+/// implementation is the cost of that proof, and the security argument in ADR-002 rests on
+/// the property holding.
+/// </summary>
+public interface ILinkTokenVerifier
+{
+    bool Verify(string? presented, byte[]? storedHash);
+}
+
+/// <summary>The production verifier. Delegates to <see cref="LinkToken"/>.</summary>
+public sealed class LinkTokenVerifier : ILinkTokenVerifier
+{
+    public bool Verify(string? presented, byte[]? storedHash) =>
+        LinkToken.Verify(presented, storedHash);
+}
+
+/// <summary>
 /// Hashes and verifies a management token.
 ///
 /// Lives in Domain because deciding whether a presented credential matches a stored one

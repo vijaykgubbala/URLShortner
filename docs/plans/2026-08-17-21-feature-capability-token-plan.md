@@ -155,7 +155,7 @@ Every AC has at least one test. Type is unit (u), integration (i) or structural 
 | **T-15** | A redirect response contains no token material | i | AC-4 | — |
 | **T-16** | Neither the create path nor a failed delete writes the token or its hash into any log message | u | AC-5 | `RecordingLogger`, asserting `DoesNotContain` over `Messages` |
 | **T-17** | A forged token — right shape, wrong bytes — is rejected | u+i | AC-6 | `STD-SEC-06` negative test |
-| **T-18** | **The verification path hashes and compares even when the code does not exist** | u | AC-3 | counting fake asserts the hasher ran on the not-found path; without this, timing reopens the oracle the `404` closes |
+| **T-18** | **The verification path is reached even when the code does not exist** | u | AC-3 | a counting `ILinkTokenVerifier` fake asserts it; without this, timing reopens the oracle the `404` closes. Written in the use-case cycle, where there is something to count |
 
 **T-11, T-14 and T-18 are the three that carry this issue.** T-11 proves the responses are
 indistinguishable, T-18 proves the *timing* is too, and T-14 proves the absence claim
@@ -195,8 +195,8 @@ Tests precede the code they verify. Every step names the test it satisfies.
 - [x] **2.** Declare `ILinkTokenGenerator { string Next(); }` in Domain beside `IShortCodeGenerator`, per `layers.md` §3.6. *(T-01, T-02)*
 - [x] **3.** Write T-03, T-04, T-05 against a not-yet-existing `LinkToken` Domain type. Observe red.
 - [x] **4.** Add `LinkToken` to Domain: `Hash(string token) -> byte[]` using `SHA256.HashData`, and `Verify(string? presented, byte[]? storedHash) -> bool` using `CryptographicOperations.FixedTimeEquals`. Decode the presented token to bytes **before** hashing. Per `layers.md` §3.2 this is a domain rule and lives here. *(T-03, T-04, T-05)*
-- [ ] **5.** Write T-18 with a counting hasher fake. Observe red. *(T-18)*
-- [ ] **6.** Make `Verify` perform the hash and the fixed-time comparison unconditionally, comparing against a fixed dummy when `storedHash` is null. *(T-18)*
+- [x] **5.** Declare `ILinkTokenVerifier` in Domain with `LinkTokenVerifier` behind it, and register it. **Amended:** the plan specified a counting *hasher* fake, but `LinkToken` is static, and an early return is behaviourally identical — same outcome, same body — so no outcome-based test catches it. A seam makes the property provable; the counting test itself moves to the use-case cycle, where there is something to count. *(T-18)*
+- [x] **6.** Make `Verify` perform the hash and the fixed-time comparison unconditionally, comparing against a fixed dummy when `storedHash` is null. *(T-18)*
 
 ### Infrastructure — the generator
 
