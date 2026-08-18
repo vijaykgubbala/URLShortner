@@ -148,7 +148,7 @@ Every AC has at least one test. Type is unit (u), integration (i) or structural 
 | **T-08** | `DELETE` with a wrong token returns `404` and the row remains | i | AC-3, AC-6 | row asserted still present |
 | **T-09** | `DELETE` with **no** `Authorization` header returns `404` and the row remains | i | AC-3 | guards the `[FromHeader] string?` binding — see Decisions |
 | **T-10** | `DELETE` on an unknown code returns `404` | i | AC-3 | — |
-| **T-11** | The responses from T-08, T-09 and T-10 are **byte-identical** in status, body and headers | i | AC-3 | the oracle test; this is the one that fails if any path diverges |
+| **T-11** | The responses from T-08, T-09 and T-10 are identical in `status`, `type`, `title`, `detail` and headers, and each carries a `traceId` | i | AC-3 | the oracle test; fails if any path diverges. **`traceId` differs per request and is expected to** — see the amendment below |
 | **T-12** | Every `404` from the delete route carries `Cache-Control: no-store` | i | ADR-002 | `404` is heuristically cacheable, `403` is not |
 | **T-13** | The create response carries `Cache-Control: no-store` | i | ADR-002 | it is the one response containing a plaintext secret |
 | **T-14** | **No public type in the `UrlShortener.Api` assembly exposes the token hash, and none has a property of type `ShortLink`** — checked recursively through property types | s | AC-4 | the category test; must fail if a future response type gains either |
@@ -161,6 +161,28 @@ Every AC has at least one test. Type is unit (u), integration (i) or structural 
 indistinguishable, T-18 proves the *timing* is too, and T-14 proves the absence claim
 structurally rather than by enumeration. The other fifteen are ordinary coverage.
 
+### Amendment — T-11 cannot assert byte-identical bodies
+
+Raised by the `/workflow-execute` architecture pre-flight, against `api.md` §4.2:
+
+> *"§4.2 requires `detail` to be 'specific to this occurrence'; three distinct causes
+> producing a byte-identical body is in tension with that. Not a violation if `detail`
+> remains occurrence-specific in a way that does not distinguish the three causes […] while
+> `type` and `title` stay identical — and the response must still carry `traceId` per §4.6."*
+
+T-11's original wording — "byte-identical in status, body and headers" — was a defect in
+this plan. `api.md` §4.6 requires a `traceId` on every error body, and a `traceId` is
+per-request, so **byte-identical bodies are impossible for any two error responses**. A test
+written that way could only pass by dropping `traceId`, which violates §4.6 and destroys the
+one mitigation `ADR-002` records for the accepted cost of this design: a legitimate caller
+who sees a `404` has a trace identifier, and the real reason exists in the log under it.
+
+**The property that matters is indistinguishability of the cause, not identity of the
+bytes.** T-11 asserts the three responses match in every field that could reveal which case
+occurred, and that each carries a `traceId` — without asserting the identifiers match.
+`detail` names only the requested code, which is occurrence-specific per §4.2 while
+revealing nothing about which of the three failures happened.
+
 ---
 
 ## Implementation Steps
@@ -169,8 +191,8 @@ Tests precede the code they verify. Every step names the test it satisfies.
 
 ### Domain — token generation and verification
 
-- [ ] **1.** Write T-01, T-02 against a not-yet-existing `ILinkTokenGenerator`. Observe compile failure, then red.
-- [ ] **2.** Declare `ILinkTokenGenerator { string Next(); }` in Domain beside `IShortCodeGenerator`, per `layers.md` §3.6. *(T-01, T-02)*
+- [x] **1.** Write T-01, T-02 against a not-yet-existing `ILinkTokenGenerator`. Observe compile failure, then red.
+- [x] **2.** Declare `ILinkTokenGenerator { string Next(); }` in Domain beside `IShortCodeGenerator`, per `layers.md` §3.6. *(T-01, T-02)*
 - [ ] **3.** Write T-03, T-04, T-05 against a not-yet-existing `LinkToken` Domain type. Observe red.
 - [ ] **4.** Add `LinkToken` to Domain: `Hash(string token) -> byte[]` using `SHA256.HashData`, and `Verify(string? presented, byte[]? storedHash) -> bool` using `CryptographicOperations.FixedTimeEquals`. Decode the presented token to bytes **before** hashing. Per `layers.md` §3.2 this is a domain rule and lives here. *(T-03, T-04, T-05)*
 - [ ] **5.** Write T-18 with a counting hasher fake. Observe red. *(T-18)*
@@ -178,7 +200,7 @@ Tests precede the code they verify. Every step names the test it satisfies.
 
 ### Infrastructure — the generator
 
-- [ ] **7.** Implement `CryptoLinkTokenGenerator` in Infrastructure: `RandomNumberGenerator.Fill` into a 32-byte span, `Base64Url.EncodeToString`. Register as a singleton in `Program.cs` beside `IShortCodeGenerator`. *(T-01, T-02)*
+- [x] **7.** Implement `CryptoLinkTokenGenerator` in Infrastructure: `RandomNumberGenerator.Fill` into a 32-byte span, `Base64Url.EncodeToString`. Register as a singleton in `Program.cs` beside `IShortCodeGenerator`. *(T-01, T-02)*
 
 ### Persistence — the column
 
@@ -254,9 +276,18 @@ and it changes the token format contract. Recorded here rather than dropped.
 guessing infeasible, but the endpoint remains an unauthenticated surface where each wrong
 token costs a hash and a database read.
 
-**The schema change has no migration.** `EnsureCreated` does nothing against an existing
-`shortlinks.db`, so this column will not appear on a database created before it. #49 owns
-migrations. This plan does not invent a second mechanism.
+**The schema change has no migration — an accepted deviation, decided before the code
+exists.** `data.md` §4.1 requires every schema change to ship as a versioned migration, and
+§4.4 requires a reverse step. This change ships neither. `EnsureCreated` does nothing against
+an existing `shortlinks.db`, so the `TokenHash` column will not appear on a database created
+before it.
+
+Raised by the `/workflow-execute` architecture pre-flight and put to the user, who chose to
+proceed and record rather than introduce migrations inside a security story or write a
+waiver. The deviation is recorded here, in the handover, and on #49, which owns the
+migration mechanism — deliberately in more than one place, because a deviation recorded only
+in a plan is one nobody reads again. This is a knowing violation of `data.md` §4.1, not a
+gap: `/workflow-review` and `/gate-check` should see it as decided, not as missed.
 
 **`requirements/nfr.md:49` is stale** — it still reads *"Authorization is unresolved and
 escalated"*, which ASM-007 resolved. Correcting it is a one-line documentation fix, not part

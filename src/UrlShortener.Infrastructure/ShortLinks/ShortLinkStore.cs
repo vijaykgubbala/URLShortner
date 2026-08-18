@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -64,6 +65,29 @@ public sealed class EfShortLinkRepository(ShortLinkDbContext db) : IShortLinkRep
 
     public Task<ShortLink?> FindAsync(string code, CancellationToken cancellationToken) =>
         db.ShortLinks.AsNoTracking().FirstOrDefaultAsync(l => l.Code == code, cancellationToken);
+}
+
+/// <summary>
+/// Management tokens, 32 bytes of CSPRNG output as unpadded base64url — 43 characters.
+///
+/// 256 bits puts brute force outside the threat model entirely, which is what lets the
+/// stored hash be a plain SHA-256 rather than a slow KDF: NIST SP 800-63B and OWASP ASVS
+/// §6.5.2 both make the salted-KDF requirement conditional on being *below* 112 bits.
+/// A slow KDF here would also hand an unauthenticated caller a per-request CPU amplifier.
+/// </summary>
+public sealed class CryptoLinkTokenGenerator : ILinkTokenGenerator
+{
+    private const int TokenBytes = 32;
+
+    public string Next()
+    {
+        Span<byte> raw = stackalloc byte[TokenBytes];
+        RandomNumberGenerator.Fill(raw);
+
+        // Base64Url is built into .NET 9 and omits padding natively — no manual
+        // Replace('+','-') surgery, which is where encoding bugs in this pattern live.
+        return Base64Url.EncodeToString(raw);
+    }
 }
 
 /// <summary>

@@ -17,6 +17,7 @@ builder.Services.AddDbContext<ShortLinkDbContext>(o =>
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IShortCodeGenerator, CryptoShortCodeGenerator>();
+builder.Services.AddSingleton<ILinkTokenGenerator, CryptoLinkTokenGenerator>();
 
 // ADR-001: explicit timeout, no retry.
 builder.Services.AddSingleton<IHostResolver>(_ => new DnsHostResolver(TimeSpan.FromSeconds(2)));

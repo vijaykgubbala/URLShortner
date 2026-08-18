@@ -10,6 +10,21 @@ public interface IShortCodeGenerator
     string Next();
 }
 
+/// <summary>
+/// Generates management tokens. Declared here for the same reason as
+/// <see cref="IShortCodeGenerator"/> — <c>layers.md</c> §3.6 requires a random source to be
+/// reached through an interface so the domain stays testable without one.
+///
+/// Separate from <see cref="IShortCodeGenerator"/> rather than a second method on it: a
+/// short code is a public identifier and a token is a credential, and a single interface
+/// producing both invites a caller to reach for the wrong one.
+/// </summary>
+public interface ILinkTokenGenerator
+{
+    /// <summary>A new token. Returned to its creator once and never recoverable after.</summary>
+    string Next();
+}
+
 /// <summary>A stored short link. The code is its public identity — <c>architecture/api.md</c> §2.4.</summary>
 public sealed class ShortLink
 {
