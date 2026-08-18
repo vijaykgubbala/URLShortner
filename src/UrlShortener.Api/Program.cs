@@ -27,11 +27,13 @@ builder.Services.AddSingleton<IHostResolver>(_ => new DnsHostResolver(TimeSpan.F
 builder.Services.AddSingleton<RejectionCounter>();
 builder.Services.AddSingleton<CreateFailureCounter>();
 builder.Services.AddSingleton<ResolveFailureCounter>();
+builder.Services.AddSingleton<DeleteRefusalCounter>();
 
 builder.Services.AddScoped<IShortLinkRepository, EfShortLinkRepository>();
 builder.Services.AddScoped<ValidateDestination>();
 builder.Services.AddScoped<CreateShortLink>();
 builder.Services.AddScoped<ResolveShortLink>();
+builder.Services.AddScoped<DeleteShortLink>();
 
 var app = builder.Build();
 

@@ -12,6 +12,9 @@ public interface IShortLinkRepository
     Task<bool> TryAddAsync(ShortLink link, CancellationToken cancellationToken);
 
     Task<ShortLink?> FindAsync(string code, CancellationToken cancellationToken);
+
+    /// <summary>Returns false if no row was removed — the database decides, not a prior read.</summary>
+    Task<bool> TryDeleteAsync(string code, CancellationToken cancellationToken);
 }
 
 public enum CreateOutcome { Created, DestinationRefused, CodeExhausted }
@@ -24,6 +27,15 @@ public sealed record CreateResult(
     CreateOutcome Outcome, string? Code, DestinationRefusal Refusal, string? ManagementToken = null);
 
 public enum ResolveOutcome { Found, NotFound, NoLongerPermitted }
+
+/// <summary>
+/// Two outcomes, not three. An unknown code and a wrong token both report
+/// <c>Refused</c> — the caller must not be able to tell them apart, and the surest way to
+/// keep that true is to give the endpoint nothing to tell them apart with. ADR-002.
+/// </summary>
+public enum DeleteOutcome { Deleted, Refused }
+
+public sealed record DeleteResult(DeleteOutcome Outcome);
 
 public sealed record ResolveResult(ResolveOutcome Outcome, string? Destination);
 
@@ -117,6 +129,55 @@ public sealed class ResolveShortLink(
 
         return new ResolveResult(ResolveOutcome.Found, link.Destination);
     }
+}
+
+/// <summary>#21 — delete a short link, on presentation of its management token.</summary>
+public sealed class DeleteShortLink(
+    IShortLinkRepository repository,
+    ILinkTokenVerifier verifier,
+    ILogger<DeleteShortLink>? logger = null,
+    DeleteRefusalCounter? counter = null)
+{
+    public async Task<DeleteResult> ExecuteAsync(
+        string code, string? presentedToken, CancellationToken cancellationToken)
+    {
+        var link = await repository.FindAsync(code, cancellationToken).ConfigureAwait(false);
+
+        // Verification runs BEFORE any branch on whether the link exists, and runs even when
+        // it does not. An early return here would be behaviourally identical -- same
+        // outcome, same 404, same body -- and differ only in duration, which is enough to
+        // tell a prober which codes are real. That is the enumeration oracle ADR-002 exists
+        // to close, and closing it in the status code while leaving it in the timing closes
+        // nothing. `link?.TokenHash` is null for a missing link, and Verify fails closed on
+        // null without shortcutting.
+        var authorized = verifier.Verify(presentedToken, link?.TokenHash);
+
+        if (link is null || !authorized)
+        {
+            counter?.Increment();
+
+            // The code, never the token. STD-SEC-04 -- and the code is already in the
+            // request path, so it discloses nothing the caller did not send.
+            logger?.LogWarning(
+                new EventId(1102, "link.delete.refused"),
+                "Delete refused for {Code}.",
+                code);
+
+            return new DeleteResult(DeleteOutcome.Refused);
+        }
+
+        await repository.TryDeleteAsync(code, cancellationToken).ConfigureAwait(false);
+
+        return new DeleteResult(DeleteOutcome.Deleted);
+    }
+}
+
+/// <summary>AC: `link_delete_refusals` — <c>STD-OPS-02</c>.</summary>
+public sealed class DeleteRefusalCounter
+{
+    private int _total;
+    public int Total => Volatile.Read(ref _total);
+    public void Increment() => Interlocked.Increment(ref _total);
 }
 
 /// <summary>AC: `link_create_failures` — <c>STD-OPS-02</c>.</summary>

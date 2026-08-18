@@ -17,6 +17,17 @@ public sealed record CreateShortLinkResponse(
 
 public static class ShortLinkEndpoints
 {
+    /// <summary>
+    /// The token out of an <c>Authorization: Bearer</c> header, or null. RFC 6750 §1 defines
+    /// Bearer as "a general HTTP authorization method that can be used with bearer tokens
+    /// from any source", so the scheme is accurate for a capability token and not merely
+    /// borrowed. Anything malformed yields null and is refused like any wrong token.
+    /// </summary>
+    private static string? ReadBearer(string? header) =>
+        header?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
+            ? header["Bearer ".Length..].Trim()
+            : null;
+
     public static void MapShortLinks(this WebApplication app)
     {
         // #18 — api.md §2.1/§2.2: version prefix, kebab-case plural noun, no verb.
@@ -56,6 +67,38 @@ public static class ShortLinkEndpoints
                     var unavailable = DestinationProblem.Unavailable(traceId);
                     return Results.Json(unavailable, statusCode: unavailable.Status);
             }
+        });
+
+        // #21 — delete, authorized by the management token. api.md §2.4: the resource's
+        // public identifier in the path; §2.6: 204 for a successful delete.
+        app.MapDelete($"/v1/short-links/{{code:length({ShortLink.CodeLength})}}", async (
+            [FromRoute] string code,
+            [FromHeader(Name = "Authorization")] string? authorization,
+            DeleteShortLink useCase,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            // Nullable, deliberately. A non-nullable [FromHeader] is *required*: the binding
+            // fails before this handler runs and returns 400 in an ASP.NET-shaped body — so
+            // "known code, no token" would answer differently from "unknown code", which is
+            // the oracle ADR-002 exists to close, and would break api.md §4.1 as well.
+            var token = ReadBearer(authorization);
+
+            var result = ShortLink.IsWellFormedCode(code)
+                ? await useCase.ExecuteAsync(code, token, ct)
+                : new DeleteResult(DeleteOutcome.Refused);
+
+            if (result.Outcome == DeleteOutcome.Deleted)
+            {
+                return Results.NoContent();
+            }
+
+            // ADR-002 — a 404 is heuristically cacheable where a 403 is not, so without
+            // no-store an intermediary can cache this and serve it to the real token holder.
+            http.Response.Headers.CacheControl = "no-store";
+
+            var problem = DestinationProblem.NotFound(code, http.TraceIdentifier);
+            return Results.Json(problem, statusCode: problem.Status);
         });
 
         // #19 — the public redirect endpoint. api.md §1.4: this is deliberately not the

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -312,6 +313,175 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
 
     private static string RawLocation(HttpResponseMessage response) =>
         response.Headers.GetValues("Location").Single();
+
+    // ---- #21 : delete, and the uniform 404 ----
+
+    private async Task<CreateShortLinkResponse> CreateAsync(string destination)
+    {
+        var response = await NoRedirect(_host).PostAsJsonAsync(
+            "/v1/short-links", new { destination });
+
+        return (await response.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!;
+    }
+
+    private static HttpRequestMessage Delete(string code, string? token)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Delete, $"/v1/short-links/{code}");
+
+        if (token is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+        }
+
+        return request;
+    }
+
+    /// <summary>T-07 — AC-2.</summary>
+    [Fact]
+    public async Task The_correct_token_deletes_the_link_and_returns_204()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/to-delete");
+
+        var deleted = await client.SendAsync(Delete(created.Code, created.ManagementToken));
+
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/{created.Code}")).StatusCode);
+    }
+
+    /// <summary>T-08 — a wrong token changes nothing.</summary>
+    [Fact]
+    public async Task A_wrong_token_returns_404_and_the_link_survives()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/keep-me");
+        var forged = new string('A', 43);
+
+        var refused = await client.SendAsync(Delete(created.Code, forged));
+
+        await AssertUniform404(refused);
+        Assert.Equal(HttpStatusCode.Found, (await client.GetAsync($"/{created.Code}")).StatusCode);
+    }
+
+    /// <summary>
+    /// T-09 — no Authorization header at all. This is the case a non-nullable [FromHeader]
+    /// would answer with a 400 before the handler ran, which would make "known code, no
+    /// token" distinguishable from "unknown code" and reopen the oracle.
+    /// </summary>
+    [Fact]
+    public async Task A_missing_token_returns_404_and_the_link_survives()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/keep-me-too");
+
+        var refused = await client.SendAsync(Delete(created.Code, null));
+
+        await AssertUniform404(refused);
+        Assert.Equal(HttpStatusCode.Found, (await client.GetAsync($"/{created.Code}")).StatusCode);
+    }
+
+    /// <summary>T-10.</summary>
+    [Fact]
+    public async Task An_unknown_code_returns_404_on_delete()
+    {
+        var response = await NoRedirect(_host).SendAsync(Delete("ZZZZZZZ", new string('A', 43)));
+
+        await AssertUniform404(response);
+    }
+
+    /// <summary>
+    /// Asserts the handled 404, not merely a 404. A bare status assertion passes with the
+    /// route deleted entirely — unrouted requests 404 too — which is review finding TST-007
+    /// on #19. Requiring the problem body makes the route load-bearing.
+    /// </summary>
+    private static async Task AssertUniform404(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("short-link-not-found", body.GetProperty("type").GetString());
+        Assert.Equal(404, body.GetProperty("status").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("traceId").GetString()));
+    }
+
+    /// <summary>
+    /// T-11 — the oracle test. The three failures must be indistinguishable in everything
+    /// that could reveal which one occurred. traceId differs per request and is expected to:
+    /// api.md §4.6 requires it, and it is what makes the cases separable in the log rather
+    /// than in the response.
+    /// </summary>
+    [Fact]
+    public async Task The_three_delete_failures_are_indistinguishable()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/oracle");
+        var forged = new string('A', 43);
+
+        var wrongToken = await client.SendAsync(Delete(created.Code, forged));
+        var noToken = await client.SendAsync(Delete(created.Code, null));
+        var unknownCode = await client.SendAsync(Delete("ZZZZZZZ", forged));
+
+        var bodies = new List<JsonElement>();
+        foreach (var r in new[] { wrongToken, noToken, unknownCode })
+        {
+            Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+            bodies.Add(await r.Content.ReadFromJsonAsync<JsonElement>());
+        }
+
+        // type, title and status must not vary at all.
+        foreach (var field in new[] { "type", "title", "status" })
+        {
+            var values = bodies.Select(b => b.GetProperty(field).ToString()).Distinct().ToList();
+            Assert.True(values.Count == 1, $"'{field}' differs across the three: {string.Join(" | ", values)}");
+        }
+
+        // For ONE code, a wrong token and a missing token must be byte-identical in detail.
+        // This is the pair that could leak: same code, two different reasons.
+        Assert.Equal(
+            bodies[0].GetProperty("detail").GetString(),
+            bodies[1].GetProperty("detail").GetString());
+
+        // The unknown-code body differs only by the code the caller itself supplied, which
+        // discloses nothing. Normalising it out, the bodies are identical — so existence is
+        // not observable, while `detail` stays occurrence-specific per api.md §4.2.
+        Assert.Equal(
+            bodies[0].GetProperty("detail").GetString()!.Replace(created.Code, "<code>"),
+            bodies[2].GetProperty("detail").GetString()!.Replace("ZZZZZZZ", "<code>"));
+
+        Assert.All(bodies, b => Assert.False(string.IsNullOrWhiteSpace(b.GetProperty("traceId").GetString())));
+    }
+
+    /// <summary>
+    /// T-12 — ADR-002. A 404 is heuristically cacheable where a 403 is not, so without this
+    /// an intermediary can cache an authorization failure and serve it to the legitimate
+    /// token holder. The obligation is created by the decision to answer 404.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_delete_is_not_cacheable()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/nocache");
+
+        var refused = await client.SendAsync(Delete(created.Code, new string('A', 43)));
+
+        Assert.True(refused.Headers.CacheControl?.NoStore, "a refused delete must set no-store");
+    }
+
+    /// <summary>T-15 — AC-4. The redirect carries no token material.</summary>
+    [Fact]
+    public async Task A_redirect_response_contains_no_token()
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/redirect-clean");
+
+        var redirect = await client.GetAsync($"/{created.Code}");
+        var body = await redirect.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain(created.ManagementToken, body);
+        Assert.DoesNotContain(created.ManagementToken, RawLocation(redirect));
+        Assert.DoesNotContain(created.ManagementToken, redirect.Headers.ToString());
+    }
 
     /// <summary>
     /// AC: a stored destination the policy now rejects is refused with 410 and no Location.

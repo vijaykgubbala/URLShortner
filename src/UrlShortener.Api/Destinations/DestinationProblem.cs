@@ -97,6 +97,23 @@ public sealed record DestinationProblem(
             traceId,
             []);
 
+    /// <summary>
+    /// The single answer to every delete failure — unknown code, wrong token, missing
+    /// token. ADR-002: distinguishing them tells a prober which codes exist.
+    ///
+    /// `detail` names only the code the caller already sent, which keeps it
+    /// occurrence-specific per api.md §4.2 while revealing nothing about which of the three
+    /// cases occurred. The traceId on the response is what separates them in the log.
+    /// </summary>
+    public static DestinationProblem NotFound(string code, string traceId) =>
+        new(
+            "short-link-not-found",
+            "That short link could not be found.",
+            404,
+            $"No short link '{code}' is available.",
+            traceId,
+            []);
+
     private static DestinationProblem Policy(
         string type, string title, string detail, string traceId) =>
         new(type, title, 422, detail, traceId, []);

@@ -70,6 +70,15 @@ public sealed class EfShortLinkRepository(ShortLinkDbContext db) : IShortLinkRep
 
     public Task<ShortLink?> FindAsync(string code, CancellationToken cancellationToken) =>
         db.ShortLinks.AsNoTracking().FirstOrDefaultAsync(l => l.Code == code, cancellationToken);
+
+    /// <summary>
+    /// One round trip, and the database reports whether anything went. ExecuteDeleteAsync
+    /// bypasses the change tracker, which is safe here because the caller's prior read used
+    /// AsNoTracking -- nothing is tracked to go stale.
+    /// </summary>
+    public async Task<bool> TryDeleteAsync(string code, CancellationToken cancellationToken) =>
+        await db.ShortLinks.Where(l => l.Code == code)
+            .ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false) > 0;
 }
 
 /// <summary>

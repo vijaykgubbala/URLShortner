@@ -35,6 +35,9 @@ public class ShortLinkUseCaseTests
         public Task<ShortLink?> FindAsync(string code, CancellationToken ct) =>
             Task.FromResult(_links.GetValueOrDefault(code));
 
+        public Task<bool> TryDeleteAsync(string code, CancellationToken ct) =>
+            Task.FromResult(_links.Remove(code));
+
         public void Seed(ShortLink link) => _links[link.Code] = link;
     }
 
@@ -45,6 +48,23 @@ public class ShortLinkUseCaseTests
             System.Buffers.Text.Base64Url.EncodeToString(Enumerable.Repeat((byte)0x11, 32).ToArray());
 
         public string Next() => token;
+    }
+
+    /// <summary>
+    /// T-18. Counts verifications so a test can prove the use case reached the check even
+    /// when the code did not exist. An early return there is behaviourally identical --
+    /// same outcome, same body -- and only differs in duration, so this seam is the only
+    /// thing that can catch its absence.
+    /// </summary>
+    private sealed class CountingVerifier : ILinkTokenVerifier
+    {
+        public int Calls { get; private set; }
+
+        public bool Verify(string? presented, byte[]? storedHash)
+        {
+            Calls++;
+            return LinkToken.Verify(presented, storedHash);
+        }
     }
 
     /// <summary>Hands out a fixed sequence, so a collision can be forced exactly.</summary>
@@ -202,5 +222,151 @@ public class ShortLinkUseCaseTests
         Assert.Equal(ResolveOutcome.Found, result.Outcome);
         Assert.Empty(logger.Events);
         Assert.Equal(0, counter.Total);
+    }
+}
+
+/// <summary>#21 — the delete path and its authorization.</summary>
+public class DeleteShortLinkTests
+{
+    private static readonly string Token =
+        System.Buffers.Text.Base64Url.EncodeToString(Enumerable.Repeat((byte)0x2B, 32).ToArray());
+
+    private static readonly string Forged =
+        System.Buffers.Text.Base64Url.EncodeToString(Enumerable.Repeat((byte)0x2C, 32).ToArray());
+
+    private sealed class FakeRepository : IShortLinkRepository
+    {
+        private readonly Dictionary<string, ShortLink> _links = [];
+
+        public Task<bool> TryAddAsync(ShortLink link, CancellationToken ct)
+        {
+            _links[link.Code] = link;
+            return Task.FromResult(true);
+        }
+
+        public Task<ShortLink?> FindAsync(string code, CancellationToken ct) =>
+            Task.FromResult(_links.GetValueOrDefault(code));
+
+        public Task<bool> TryDeleteAsync(string code, CancellationToken ct) =>
+            Task.FromResult(_links.Remove(code));
+
+        public bool Has(string code) => _links.ContainsKey(code);
+
+        public void Seed(ShortLink link) => _links[link.Code] = link;
+    }
+
+    private sealed class CountingVerifier : ILinkTokenVerifier
+    {
+        public int Calls { get; private set; }
+
+        public bool Verify(string? presented, byte[]? storedHash)
+        {
+            Calls++;
+            return LinkToken.Verify(presented, storedHash);
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+    }
+
+    private static FakeRepository SeededRepository()
+    {
+        var repository = new FakeRepository();
+        repository.Seed(new ShortLink(
+            "OWNED01", "https://example.com/mine", DateTimeOffset.UtcNow, LinkToken.Hash(Token)));
+        return repository;
+    }
+
+    [Fact]
+    public async Task The_correct_token_deletes_the_link()
+    {
+        var repository = SeededRepository();
+
+        var result = await new DeleteShortLink(repository, new CountingVerifier())
+            .ExecuteAsync("OWNED01", Token, CancellationToken.None);
+
+        Assert.Equal(DeleteOutcome.Deleted, result.Outcome);
+        Assert.False(repository.Has("OWNED01"));
+    }
+
+    /// <summary>T-17 — the forged-token negative test STD-SEC-06 requires.</summary>
+    [Fact]
+    public async Task A_forged_token_is_refused_and_the_link_survives()
+    {
+        var repository = SeededRepository();
+
+        var result = await new DeleteShortLink(repository, new CountingVerifier())
+            .ExecuteAsync("OWNED01", Forged, CancellationToken.None);
+
+        Assert.Equal(DeleteOutcome.Refused, result.Outcome);
+        Assert.True(repository.Has("OWNED01"));
+    }
+
+    [Fact]
+    public async Task A_missing_token_is_refused_and_the_link_survives()
+    {
+        var repository = SeededRepository();
+
+        var result = await new DeleteShortLink(repository, new CountingVerifier())
+            .ExecuteAsync("OWNED01", null, CancellationToken.None);
+
+        Assert.Equal(DeleteOutcome.Refused, result.Outcome);
+        Assert.True(repository.Has("OWNED01"));
+    }
+
+    /// <summary>
+    /// An unknown code and a wrong token must be indistinguishable to the caller, so the
+    /// use case reports the same outcome for both. ADR-002.
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_code_reports_the_same_outcome_as_a_wrong_token()
+    {
+        var unknown = await new DeleteShortLink(SeededRepository(), new CountingVerifier())
+            .ExecuteAsync("NOSUCH1", Token, CancellationToken.None);
+
+        var wrong = await new DeleteShortLink(SeededRepository(), new CountingVerifier())
+            .ExecuteAsync("OWNED01", Forged, CancellationToken.None);
+
+        Assert.Equal(wrong.Outcome, unknown.Outcome);
+    }
+
+    /// <summary>
+    /// T-18 — the test the ILinkTokenVerifier seam exists for. Verification must run even
+    /// when the code does not exist, or an unknown code returns measurably faster than a
+    /// wrong token and timing discloses what the identical 404 conceals.
+    /// </summary>
+    [Fact]
+    public async Task Verification_runs_even_when_the_code_does_not_exist()
+    {
+        var verifier = new CountingVerifier();
+
+        await new DeleteShortLink(SeededRepository(), verifier)
+            .ExecuteAsync("NOSUCH1", Token, CancellationToken.None);
+
+        Assert.Equal(1, verifier.Calls);
+    }
+
+    /// <summary>T-16 — AC-5. The token appears in no log argument, on any path.</summary>
+    [Fact]
+    public async Task The_token_never_reaches_a_log_message()
+    {
+        var logger = new RecordingLogger<DeleteShortLink>();
+        var sut = new DeleteShortLink(SeededRepository(), new CountingVerifier(), logger);
+
+        await sut.ExecuteAsync("OWNED01", Token, CancellationToken.None);
+        await sut.ExecuteAsync("OWNED01", Forged, CancellationToken.None);
+        await sut.ExecuteAsync("NOSUCH1", Token, CancellationToken.None);
+
+        Assert.DoesNotContain(logger.Messages, m => m.Contains(Token));
+        Assert.DoesNotContain(logger.Messages, m => m.Contains(Forged));
     }
 }
