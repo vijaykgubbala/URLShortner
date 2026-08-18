@@ -48,14 +48,14 @@ code, not merely compiling.
 Copied verbatim from the issue. **AC-3 is amended** — the original text is preserved and
 the amendment stated beneath it, so the change is auditable rather than silent.
 
-- [ ] Given a successful create, when the response is returned, then it contains a management token generated from a cryptographically secure source.
-- [ ] Given a mutation request with the correct token for that link, when it is processed, then it succeeds.
-- [ ] ~~Given a mutation request with a missing or incorrect token, when it is processed, then `403` is returned and no change is made.~~
+- [x] Given a successful create, when the response is returned, then it contains a management token generated from a cryptographically secure source.
+- [x] Given a mutation request with the correct token for that link, when it is processed, then it succeeds.
+- [x] ~~Given a mutation request with a missing or incorrect token, when it is processed, then `403` is returned and no change is made.~~
   - **AMENDED:** *Given a mutation request with a missing or incorrect token, or a request for a code that does not exist, when it is processed, then an identical `404` is returned, with an identical body, and no change is made.*
   - **Rationale:** answering the three cases differently discloses which codes exist, turning the authorization check into an enumeration oracle against the space `data.md` §1.4 spends a CSPRNG to protect. Recorded in [`ADR-002`](../../decisions/ADR-002-uniform-404-for-capability-token-failures.md) with the amendment to `api.md` §2.6 that permits it.
-- [ ] Given any response other than the original create, when it is returned, then it does not contain the token.
-- [ ] Given the application's logs, when a mutation is processed, then the token does not appear in any log argument.
-- [ ] Given a forged token attempt, when the test suite runs, then a negative test asserts it is rejected.
+- [x] Given any response other than the original create, when it is returned, then it does not contain the token.
+- [x] Given the application's logs, when a mutation is processed, then the token does not appear in any log argument.
+- [x] Given a forged token attempt, when the test suite runs, then a negative test asserts it is rejected.
 
 ---
 
@@ -224,12 +224,12 @@ Tests precede the code they verify. Every step names the test it satisfies.
 
 ### Structural proof
 
-- [ ] **19.** Write T-14 as a reflection test over the Api assembly, recursing through property types. Observe it fail against a deliberately added `TokenHash` property, then remove that property and observe green. *(T-14)*
+- [x] **19.** Write T-14 as a reflection test over the Api assembly, recursing through property types. Observe it fail against a deliberately added `TokenHash` property, then remove that property and observe green. *(T-14)*
 
 ### Close-out
 
-- [ ] **20.** Run the full suite. For every gap discovered during execution, create a test, a deferred finding, or a follow-up issue — not a note. *(`a-named-gap-is-not-a-work-item`)*
-- [ ] **21.** Verify every AC has a passing test asserting it. Report any without one as a blocker.
+- [x] **20.** Run the full suite. For every gap discovered during execution, create a test, a deferred finding, or a follow-up issue — not a note. *(`a-named-gap-is-not-a-work-item`)*
+- [x] **21.** Verify every AC has a passing test asserting it. Report any without one as a blocker.
 
 ---
 
