@@ -60,7 +60,9 @@ Every waiver carries all six fields. A record missing any one of them is invalid
 - **Rationale:** The full check requires a DNS lookup, and #19's acceptance criteria hold the redirect path to 50 ms at p99 under 100 rps. Resolving on every redirect cannot meet that without a cache whose invalidation is itself unbuilt. The service never fetches the destination server-side — it emits a `Location` header and the visitor's own browser makes the request — so the SSRF half of `STD-SEC-05`'s rationale does not apply. **The phishing half does**, and this waiver accepts that residual exposure: a host that resolved publicly at creation and later resolves privately will still be redirected to.
 - **Approver:** ReposVijay
 - **Expiry:** 2026-11-17
-- **Follow-up issue:** #19 — the redirect path re-check, to be implemented with a cached policy verdict and a bounded TTL, or this waiver renewed with a fresh decision.
+- **Follow-up issue:** #47 — the redirect path re-check, to be implemented with a cached policy verdict and a bounded TTL, or this waiver renewed with a fresh decision.
+
+**Amended 2026-08-17.** This field named **#19** until #19 shipped and closed without implementing the re-check: what merged was the scheme half only, which is inside this waiver's scope and therefore not a violation — but it left the waiver pointing at spent work, so nothing tracked its removal. Raised by `review-security` finding SEC-004 during `/workflow-review 19`. The reference now names #47, which is open. Recorded rather than silently repointed, because the history that matters here is that the remedy was deferred a second time rather than delivered.
 
 **Raised by:** `review-security` finding SEC-001 during `/workflow-review 17`. The agent was correct that the accepted-residual-risk note in `docs/plans/2026-08-17-17-feature-destination-url-policy-plan.md` was **not** a waiver and did not satisfy this rule. This record is what makes the deviation reviewable and time-bounded rather than a permanent quiet exception.
 
