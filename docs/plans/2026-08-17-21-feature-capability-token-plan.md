@@ -193,8 +193,8 @@ Tests precede the code they verify. Every step names the test it satisfies.
 
 - [x] **1.** Write T-01, T-02 against a not-yet-existing `ILinkTokenGenerator`. Observe compile failure, then red.
 - [x] **2.** Declare `ILinkTokenGenerator { string Next(); }` in Domain beside `IShortCodeGenerator`, per `layers.md` §3.6. *(T-01, T-02)*
-- [ ] **3.** Write T-03, T-04, T-05 against a not-yet-existing `LinkToken` Domain type. Observe red.
-- [ ] **4.** Add `LinkToken` to Domain: `Hash(string token) -> byte[]` using `SHA256.HashData`, and `Verify(string? presented, byte[]? storedHash) -> bool` using `CryptographicOperations.FixedTimeEquals`. Decode the presented token to bytes **before** hashing. Per `layers.md` §3.2 this is a domain rule and lives here. *(T-03, T-04, T-05)*
+- [x] **3.** Write T-03, T-04, T-05 against a not-yet-existing `LinkToken` Domain type. Observe red.
+- [x] **4.** Add `LinkToken` to Domain: `Hash(string token) -> byte[]` using `SHA256.HashData`, and `Verify(string? presented, byte[]? storedHash) -> bool` using `CryptographicOperations.FixedTimeEquals`. Decode the presented token to bytes **before** hashing. Per `layers.md` §3.2 this is a domain rule and lives here. *(T-03, T-04, T-05)*
 - [ ] **5.** Write T-18 with a counting hasher fake. Observe red. *(T-18)*
 - [ ] **6.** Make `Verify` perform the hash and the fixed-time comparison unconditionally, comparing against a fixed dummy when `storedHash` is null. *(T-18)*
 
