@@ -72,9 +72,15 @@ public sealed class EfShortLinkRepository(ShortLinkDbContext db) : IShortLinkRep
         db.ShortLinks.AsNoTracking().FirstOrDefaultAsync(l => l.Code == code, cancellationToken);
 
     /// <summary>
-    /// One round trip, and the database reports whether anything went. ExecuteDeleteAsync
-    /// bypasses the change tracker, which is safe here because the caller's prior read used
-    /// AsNoTracking -- nothing is tracked to go stale.
+    /// One round trip, and the database reports whether anything went.
+    ///
+    /// ExecuteDeleteAsync bypasses the change tracker. Review finding COR-005: the previous
+    /// comment justified that by "the caller's prior read used AsNoTracking -- nothing is
+    /// tracked to go stale", which is narrower than the code it protects. TryAddAsync leaves
+    /// its entity tracked on the success path, in the same scoped context. The guarantee is
+    /// therefore that no request path both adds and deletes within one scope, not that the
+    /// context tracks nothing. If one ever does, this executes immediately and out of order
+    /// with any pending SaveChangesAsync.
     /// </summary>
     public async Task<bool> TryDeleteAsync(string code, CancellationToken cancellationToken) =>
         await db.ShortLinks.Where(l => l.Code == code)

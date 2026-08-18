@@ -314,6 +314,83 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
     private static string RawLocation(HttpResponseMessage response) =>
         response.Headers.GetValues("Location").Single();
 
+    /// <summary>
+    /// TST-006 — every header except the per-request ones. The plan's amended T-11 said
+    /// "identical in ... and headers" and the delivered test read none, so `no-store` was
+    /// asserted on only one of the three refusal paths even though ADR-002 makes it the
+    /// mitigation for choosing 404 over 403.
+    /// </summary>
+    private static List<string> ComparableHeaders(HttpResponseMessage response) =>
+        response.Headers.Concat(response.Content.Headers)
+            .Where(h => h.Key is not ("Date" or "Server" or "Transfer-Encoding"))
+            .Select(h => $"{h.Key}:{string.Join(",", h.Value)}")
+            .Order()
+            .ToList();
+
+    /// <summary>
+    /// SEC-003 — STD-SEC-02 at the boundary. An oversized bearer value must be rejected in
+    /// Entrypoints rather than travelling to Domain, and must still answer the uniform 404.
+    /// </summary>
+    [Theory]
+    [InlineData(30000)]
+    [InlineData(1)]
+    [InlineData(200)]
+    public async Task An_authorization_header_of_the_wrong_length_is_refused_at_the_boundary(int length)
+    {
+        var client = NoRedirect(_host);
+        var created = await CreateAsync("https://example.com/boundary");
+
+        var refused = await client.SendAsync(Delete(created.Code, new string('A', length)));
+
+        await AssertUniform404(refused);
+        Assert.Equal(HttpStatusCode.Found, (await client.GetAsync($"/{created.Code}")).StatusCode);
+    }
+
+    /// <summary>
+    /// TST-008 — the attack nothing else covers. Every other negative test presents a
+    /// synthetic token; this presents a real, valid, live credential belonging to a
+    /// different link, which is what distinguishes "verifies against this row's hash" from
+    /// "verifies against any hash".
+    /// </summary>
+    [Fact]
+    public async Task One_links_token_cannot_delete_another_link()
+    {
+        var client = NoRedirect(_host);
+        var a = await CreateAsync("https://example.com/link-a");
+        var b = await CreateAsync("https://example.com/link-b");
+
+        var refused = await client.SendAsync(Delete(b.Code, a.ManagementToken));
+
+        await AssertUniform404(refused);
+        Assert.Equal(HttpStatusCode.Found, (await client.GetAsync($"/{b.Code}")).StatusCode);
+    }
+
+    /// <summary>
+    /// TST-010 — the alphabet guard on the delete route had no test, and after COR-002 it
+    /// also pins that a malformed code produces the same problem body as every other
+    /// refusal rather than a hand-built one.
+    /// </summary>
+    [Theory]
+    [InlineData("abc-def")]
+    [InlineData("AAAAAA!")]
+    [InlineData(".......")]
+    public async Task A_delete_for_a_code_outside_the_alphabet_returns_the_uniform_404(string code)
+    {
+        var response = await NoRedirect(_host).SendAsync(Delete(code, new string('A', 43)));
+
+        await AssertUniform404(response);
+    }
+
+    /// <summary>C1 — the token must not reach a default formatter. STD-SEC-03.</summary>
+    [Fact]
+    public async Task The_create_response_does_not_print_its_token()
+    {
+        var created = await CreateAsync("https://example.com/tostring");
+
+        Assert.DoesNotContain(created.ManagementToken, created.ToString());
+        Assert.Contains(created.Code, created.ToString());
+    }
+
     // ---- #21 : delete, and the uniform 404 ----
 
     private async Task<CreateShortLinkResponse> CreateAsync(string destination)
@@ -450,6 +527,21 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
             bodies[2].GetProperty("detail").GetString()!.Replace("ZZZZZZZ", "<code>"));
 
         Assert.All(bodies, b => Assert.False(string.IsNullOrWhiteSpace(b.GetProperty("traceId").GetString())));
+
+        // TST-006 — the JSON property set, not just four fields. A path returning the same
+        // type/title/status/detail but a non-empty `errors` array is distinguishable, and
+        // DestinationProblem already carries one.
+        var propertySets = bodies
+            .Select(b => string.Join(",", b.EnumerateObject().Select(x => x.Name).Order()))
+            .Distinct()
+            .ToList();
+
+        Assert.True(propertySets.Count == 1, $"property sets differ: {string.Join(" | ", propertySets)}");
+
+        // TST-006 — and the headers, which the plan required and the delivered test omitted.
+        // This is what asserts no-store on all three refusal paths rather than only one.
+        Assert.Equal(ComparableHeaders(wrongToken), ComparableHeaders(noToken));
+        Assert.Equal(ComparableHeaders(wrongToken), ComparableHeaders(unknownCode));
     }
 
     /// <summary>

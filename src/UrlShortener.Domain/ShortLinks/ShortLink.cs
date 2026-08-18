@@ -31,6 +31,13 @@ public sealed class ShortLink
     public const int CodeLength = 7;
 
     /// <summary>
+    /// A management token's length as unpadded base64url: 32 bytes encodes to 43
+    /// characters. Declared here so the boundary guard in Entrypoints and the generator in
+    /// Infrastructure cannot drift, the same reason <see cref="CodeAlphabet"/> lives here.
+    /// </summary>
+    public const int TokenLength = 43;
+
+    /// <summary>
     /// The characters a code is drawn from. Lives here rather than beside the generator
     /// because the code format is a domain rule (<c>layers.md</c> §3.2) — Infrastructure
     /// supplies the randomness, Domain owns the shape. Keeping both halves here is what

@@ -266,8 +266,15 @@ public class DeleteShortLinkTests
         }
     }
 
+    /// <summary>
+    /// Review finding TST-001. This double previously recorded only Messages, dropping the
+    /// Events list its sibling in this same file keeps -- the list that exists because of
+    /// findings C7/C8 on #19, where a telemetry AC was a conjunction and only one half was
+    /// asserted. The same defect reappeared here with the halves swapped.
+    /// </summary>
     private sealed class RecordingLogger<T> : ILogger<T>
     {
+        public List<string> Events { get; } = [];
         public List<string> Messages { get; } = [];
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -275,7 +282,11 @@ public class DeleteShortLinkTests
 
         public void Log<TState>(
             LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+            Func<TState, Exception?, string> formatter)
+        {
+            Events.Add(eventId.Name ?? string.Empty);
+            Messages.Add(formatter(state, exception));
+        }
     }
 
     private static FakeRepository SeededRepository()
@@ -355,18 +366,134 @@ public class DeleteShortLinkTests
         Assert.Equal(1, verifier.Calls);
     }
 
-    /// <summary>T-16 — AC-5. The token appears in no log argument, on any path.</summary>
+    /// <summary>
+    /// T-16 — AC-5. The token appears in no log argument, on any path.
+    ///
+    /// Review finding TST-007 corrected two defects here. The assertions are absence-only
+    /// and so were trivially true over an empty list -- deleting all logging left this
+    /// green -- hence the NotEmpty guard, the same shape as the walker guard in
+    /// ResponseSurfaceTests. And a single shared sut deleted the row on the first call, so
+    /// calls two and three were both unknown-code cases; the handover's claim that this
+    /// "exercises all three delete paths" was untrue. Each call now gets a fresh repository.
+    /// </summary>
     [Fact]
     public async Task The_token_never_reaches_a_log_message()
     {
         var logger = new RecordingLogger<DeleteShortLink>();
-        var sut = new DeleteShortLink(SeededRepository(), new CountingVerifier(), logger);
 
-        await sut.ExecuteAsync("OWNED01", Token, CancellationToken.None);
-        await sut.ExecuteAsync("OWNED01", Forged, CancellationToken.None);
-        await sut.ExecuteAsync("NOSUCH1", Token, CancellationToken.None);
+        DeleteShortLink Sut() => new(SeededRepository(), new CountingVerifier(), logger);
 
+        await Sut().ExecuteAsync("OWNED01", Token, CancellationToken.None);
+        await Sut().ExecuteAsync("OWNED01", Forged, CancellationToken.None);
+        await Sut().ExecuteAsync("NOSUCH1", Token, CancellationToken.None);
+        await Sut().ExecuteAsync("bad-code", Token, CancellationToken.None);
+
+        Assert.NotEmpty(logger.Messages);
         Assert.DoesNotContain(logger.Messages, m => m.Contains(Token));
         Assert.DoesNotContain(logger.Messages, m => m.Contains(Forged));
+    }
+
+    /// <summary>TST-001 — AC-5's other half. The event fires, exactly once, per refusal.</summary>
+    [Fact]
+    public async Task A_refused_delete_emits_the_event_and_moves_the_counter()
+    {
+        var logger = new RecordingLogger<DeleteShortLink>();
+        var counter = new DeleteRefusalCounter();
+
+        await new DeleteShortLink(SeededRepository(), new CountingVerifier(), logger, counter)
+            .ExecuteAsync("OWNED01", Forged, CancellationToken.None);
+
+        Assert.Single(logger.Events, e => e == "link.delete.refused");
+        Assert.Equal(1, counter.Total);
+    }
+
+    /// <summary>The negative twin — without it the event could be made unconditional.</summary>
+    [Fact]
+    public async Task An_authorized_delete_emits_nothing_and_moves_no_counter()
+    {
+        var logger = new RecordingLogger<DeleteShortLink>();
+        var counter = new DeleteRefusalCounter();
+
+        await new DeleteShortLink(SeededRepository(), new CountingVerifier(), logger, counter)
+            .ExecuteAsync("OWNED01", Token, CancellationToken.None);
+
+        Assert.Empty(logger.Events);
+        Assert.Equal(0, counter.Total);
+    }
+
+    /// <summary>
+    /// COR-002 — a malformed code is a refusal like any other, and must be logged and
+    /// counted. It previously short-circuited in the endpoint, producing a 404 with a
+    /// traceId that pointed at no log entry.
+    /// </summary>
+    [Fact]
+    public async Task A_malformed_code_is_refused_logged_and_counted()
+    {
+        var logger = new RecordingLogger<DeleteShortLink>();
+        var counter = new DeleteRefusalCounter();
+
+        var result = await new DeleteShortLink(
+                SeededRepository(), new CountingVerifier(), logger, counter)
+            .ExecuteAsync("abc-def", Token, CancellationToken.None);
+
+        Assert.Equal(DeleteOutcome.Refused, result.Outcome);
+        Assert.Single(logger.Events, e => e == "link.delete.refused");
+        Assert.Equal(1, counter.Total);
+    }
+
+    /// <summary>
+    /// TST-008 — the attack no other test covers. Every other negative test presents a
+    /// synthetic token; this presents a real, valid, live credential belonging to a
+    /// different row, which is what distinguishes "verifies against this row's hash" from
+    /// "verifies against any hash".
+    /// </summary>
+    [Fact]
+    public async Task One_links_token_cannot_delete_another_link()
+    {
+        var repository = new FakeRepository();
+        repository.Seed(new ShortLink(
+            "OWNED01", "https://example.com/a", DateTimeOffset.UtcNow, LinkToken.Hash(Token)));
+        repository.Seed(new ShortLink(
+            "OWNED02", "https://example.com/b", DateTimeOffset.UtcNow, LinkToken.Hash(Forged)));
+
+        var result = await new DeleteShortLink(repository, new CountingVerifier())
+            .ExecuteAsync("OWNED02", Token, CancellationToken.None);
+
+        Assert.Equal(DeleteOutcome.Refused, result.Outcome);
+        Assert.True(repository.Has("OWNED02"));
+    }
+
+    /// <summary>
+    /// COR-001 — Deleted must report what the database did. With the result discarded, a
+    /// repository that removed nothing still reported 204 and no test could see it.
+    /// </summary>
+    [Fact]
+    public async Task A_delete_that_removes_no_row_is_not_reported_as_deleted()
+    {
+        var repository = new RefusingDeleteRepository();
+        repository.Seed(new ShortLink(
+            "OWNED01", "https://example.com/a", DateTimeOffset.UtcNow, LinkToken.Hash(Token)));
+
+        var result = await new DeleteShortLink(repository, new CountingVerifier())
+            .ExecuteAsync("OWNED01", Token, CancellationToken.None);
+
+        Assert.NotEqual(DeleteOutcome.Deleted, result.Outcome);
+    }
+
+    /// <summary>Verification succeeds, but the row is gone by the time the delete runs.</summary>
+    private sealed class RefusingDeleteRepository : IShortLinkRepository
+    {
+        private readonly Dictionary<string, ShortLink> _links = [];
+
+        public Task<bool> TryAddAsync(ShortLink link, CancellationToken ct) =>
+            Task.FromResult(true);
+
+        public Task<ShortLink?> FindAsync(string code, CancellationToken ct) =>
+            Task.FromResult(_links.GetValueOrDefault(code));
+
+        public Task<bool> TryDeleteAsync(string code, CancellationToken ct) =>
+            Task.FromResult(false);
+
+        public void Seed(ShortLink link) => _links[link.Code] = link;
     }
 }

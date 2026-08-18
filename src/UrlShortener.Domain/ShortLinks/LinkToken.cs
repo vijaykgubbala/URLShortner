@@ -50,6 +50,18 @@ public static class LinkToken
     private static readonly byte[] Absent = new byte[HashBytes];
 
     /// <summary>
+    /// Counts hash-and-compare operations, so a test can assert that every verification path
+    /// does the same amount of work without putting a clock in CI.
+    ///
+    /// Review finding TST-003. The <see cref="ILinkTokenVerifier"/> seam proves verification
+    /// was *reached*; it cannot see what happens inside. An early return here -- for example
+    /// `if (storedHash is null) return false;` -- left the seam's count at 1 and the whole
+    /// suite green while reintroducing exactly the timing oracle ADR-002 rests on closing.
+    /// This counter is what kills that mutation.
+    /// </summary>
+    internal static long WorkUnits;
+
+    /// <summary>
     /// SHA-256 over the token's decoded bytes.
     ///
     /// A plain hash rather than a slow KDF is correct here and is not a shortcut: NIST
@@ -93,10 +105,12 @@ public static class LinkToken
     public static bool Verify(string? presented, byte[]? storedHash)
     {
         var presentedHash = SHA256.HashData(Decode(presented) ?? []);
+        Interlocked.Increment(ref WorkUnits);
 
         var comparand = storedHash is { Length: HashBytes } ? storedHash : Absent;
 
         var matches = CryptographicOperations.FixedTimeEquals(presentedHash, comparand);
+        Interlocked.Increment(ref WorkUnits);
 
         // The comparison ran either way; its result only counts when there was something
         // real to compare against and the input was well formed.

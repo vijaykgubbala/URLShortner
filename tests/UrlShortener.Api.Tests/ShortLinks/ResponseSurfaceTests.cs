@@ -1,5 +1,6 @@
 using System.Reflection;
 using UrlShortener.Api.ShortLinks;
+using UrlShortener.Application.ShortLinks;
 using UrlShortener.Domain.ShortLinks;
 
 namespace UrlShortener.Api.Tests.ShortLinks;
@@ -22,12 +23,22 @@ namespace UrlShortener.Api.Tests.ShortLinks;
 /// </summary>
 public class ResponseSurfaceTests
 {
-    /// <summary>Every public type the Api assembly could serialise.</summary>
+    /// <summary>
+    /// Every public type the Api or Application assemblies could serialise.
+    ///
+    /// Review finding TST-005 found three escapes from the previous version. `Type.IsPublic`
+    /// is FALSE for a nested public type -- that is `IsNestedPublic` -- so a response record
+    /// declared inside a static endpoints class was never enqueued. And the Application
+    /// assembly was excluded entirely, which is where `CreateResult` carries the plaintext
+    /// token out of the use case: the test asserting "exactly one type carries a token"
+    /// could not see the other one.
+    /// </summary>
     private static IEnumerable<Type> ApiTypes() =>
-        typeof(CreateShortLinkResponse).Assembly
-            .GetTypes()
-            .Where(t => t.IsPublic
-                        && t.Namespace?.StartsWith("UrlShortener.Api", StringComparison.Ordinal) == true);
+        new[] { typeof(CreateShortLinkResponse).Assembly, typeof(CreateResult).Assembly }
+            .SelectMany(a => a.GetTypes())
+            .Where(t => (t.IsPublic || t.IsNestedPublic)
+                        && (t.Namespace?.StartsWith("UrlShortener.Api", StringComparison.Ordinal) == true
+                            || t.Namespace?.StartsWith("UrlShortener.Application", StringComparison.Ordinal) == true));
 
     private static IEnumerable<PropertyInfo> PropertiesOf(Type type) =>
         type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
@@ -66,9 +77,35 @@ public class ResponseSurfaceTests
         }
     }
 
-    /// <summary>The type itself plus any generic arguments, so collections are followed.</summary>
-    private static IEnumerable<Type> Unwrap(Type type) =>
-        new[] { type }.Concat(type.IsGenericType ? type.GetGenericArguments() : []);
+    /// <summary>
+    /// The type itself, its element type if it is an array, and its generic arguments --
+    /// recursively. Review finding TST-005: the previous version followed exactly one
+    /// generic level and ignored arrays entirely, so a `ShortLink[]` property escaped both
+    /// the entity check and the walk into its members.
+    /// </summary>
+    private static IEnumerable<Type> Unwrap(Type type)
+    {
+        yield return type;
+
+        if (type.HasElementType)
+        {
+            foreach (var inner in Unwrap(type.GetElementType()!))
+            {
+                yield return inner;
+            }
+        }
+
+        if (type.IsGenericType)
+        {
+            foreach (var argument in type.GetGenericArguments())
+            {
+                foreach (var inner in Unwrap(argument))
+                {
+                    yield return inner;
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// No serialisable API type may expose the stored hash. The hash is not the credential,
@@ -115,7 +152,11 @@ public class ResponseSurfaceTests
             .Select(p => $"{p.Owner.Name}.{p.Property.Name}")
             .ToList();
 
-        Assert.Equal([$"{nameof(CreateShortLinkResponse)}.ManagementToken"], carriers);
+        // Two carriers, both intended: the transport DTO on the 201, and the use-case
+        // result it is built from. Order-independent so a third addition fails informatively.
+        Assert.Equal(
+            new[] { "CreateResult.ManagementToken", $"{nameof(CreateShortLinkResponse)}.ManagementToken" }.Order(),
+            carriers.Order());
     }
 
     /// <summary>
@@ -131,5 +172,8 @@ public class ResponseSurfaceTests
         Assert.Contains($"{nameof(CreateShortLinkResponse)}.Code", reached);
         Assert.Contains("DestinationProblem.TraceId", reached);
         Assert.Contains("FieldError.Field", reached);
+
+        // TST-005 — the Application-layer carrier the walker previously could not see.
+        Assert.Contains("CreateResult.Outcome", reached);
     }
 }

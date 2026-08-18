@@ -6,10 +6,15 @@ namespace UrlShortener.Infrastructure.Tests.ShortLinks;
 /// <summary>
 /// T-01, T-02 — the management token is unguessable and safe to put in a header.
 ///
-/// The generator has no test that inspects its source, deliberately: T-02 asserts a
-/// property no sequence can satisfy, so substituting Random.Shared or a counter for the
-/// CSPRNG fails here rather than passing review. Review finding TST-012 on #19 was exactly
-/// this gap left open on the short-code generator.
+/// **These tests prove shape, distinctness and non-ordering. They do NOT prove the source
+/// is cryptographically secure.** Review finding TST-004 corrected an earlier claim here
+/// that substituting Random.Shared would fail: it was checked by mutation and it does not.
+/// Every test below passes with `Random.Shared.NextBytes`, and with a `new Random(42)`
+/// seeded once per process. Only a monotonic counter or timestamp fails.
+///
+/// AC-1's "generated from a cryptographically secure source" therefore has no test. A false
+/// claim in a test file is worse than no claim, because a reader believes it. The
+/// distribution test that would close this is routed to #50.
 /// </summary>
 public class CryptoLinkTokenGeneratorTests
 {

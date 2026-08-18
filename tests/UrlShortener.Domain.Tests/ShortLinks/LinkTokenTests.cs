@@ -120,4 +120,36 @@ public class LinkTokenTests
     {
         Assert.False(LinkToken.Verify(Sample, [1, 2, 3]));
     }
+
+    /// <summary>
+    /// TST-003 — the test the seam could not be. ILinkTokenVerifier proves verification was
+    /// *reached*; it cannot see the work inside. An early return here left the seam's count
+    /// at 1 and all 217 tests green while reintroducing the timing oracle ADR-002 rests on
+    /// closing. This asserts equal work across every input shape, which kills that mutation
+    /// without putting a clock in CI.
+    /// </summary>
+    [Fact]
+    public void Every_verification_path_does_the_same_work()
+    {
+        long Work(Action act)
+        {
+            var before = System.Threading.Interlocked.Read(ref LinkToken.WorkUnits);
+            act();
+            return System.Threading.Interlocked.Read(ref LinkToken.WorkUnits) - before;
+        }
+
+        var stored = LinkToken.Hash(Sample);
+
+        var authorized = Work(() => LinkToken.Verify(Sample, stored));
+        var wrongToken = Work(() => LinkToken.Verify(Other, stored));
+        var noStoredHash = Work(() => LinkToken.Verify(Sample, null));
+        var malformed = Work(() => LinkToken.Verify("not-a-token", stored));
+        var nothing = Work(() => LinkToken.Verify(null, null));
+
+        Assert.Equal(authorized, wrongToken);
+        Assert.Equal(authorized, noStoredHash);
+        Assert.Equal(authorized, malformed);
+        Assert.Equal(authorized, nothing);
+        Assert.True(authorized > 0, "the counter never moved -- this test would pass vacuously");
+    }
 }

@@ -6,4 +6,10 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- LinkToken.WorkUnits is internal and exists only so a test can assert that every
+         verification path does equal work. See review finding TST-003. -->
+    <InternalsVisibleTo Include="UrlShortener.Domain.Tests" />
+  </ItemGroup>
+
 </Project>

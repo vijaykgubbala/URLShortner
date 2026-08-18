@@ -13,7 +13,20 @@ public sealed record CreateShortLinkRequest(string? Destination);
 /// within the version per <c>api.md</c> §3.1.
 /// </summary>
 public sealed record CreateShortLinkResponse(
-    string Code, string Destination, string ShortUrl, string ManagementToken);
+    string Code, string Destination, string ShortUrl, string ManagementToken)
+{
+    /// <summary>
+    /// Review finding SEC-002, ToString half. The synthesised printer emitted the token in
+    /// cleartext. The serialisation half is a separate escalated question -- STD-SEC-03
+    /// forbids a serializable credential property and AC-1 requires the token in this
+    /// response, and the two cannot both hold as written.
+    /// </summary>
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append($"Code = {Code}, Destination = {Destination}, ShortUrl = {ShortUrl}");
+        return true;
+    }
+}
 
 public static class ShortLinkEndpoints
 {
@@ -23,10 +36,25 @@ public static class ShortLinkEndpoints
     /// from any source", so the scheme is accurate for a capability token and not merely
     /// borrowed. Anything malformed yields null and is refused like any wrong token.
     /// </summary>
-    private static string? ReadBearer(string? header) =>
-        header?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
-            ? header["Bearer ".Length..].Trim()
+    private static string? ReadBearer(string? header)
+    {
+        if (header?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return null;
+        }
+
+        var candidate = header["Bearer ".Length..].Trim();
+
+        // Review finding SEC-003. STD-SEC-02 wants length and format at the boundary, not in
+        // Domain -- and the route value below already gets exactly that, so the standard was
+        // being applied to the code and not to the credential beside it. Returning null
+        // rather than short-circuiting is deliberate: Verify still runs on every path, so
+        // the constant-work property is untouched. 43 unpadded, 44 padded.
+        return candidate.Length == ShortLink.TokenLength
+               || candidate.Length == ShortLink.TokenLength + 1
+            ? candidate
             : null;
+    }
 
     public static void MapShortLinks(this WebApplication app)
     {
@@ -84,9 +112,10 @@ public static class ShortLinkEndpoints
             // the oracle ADR-002 exists to close, and would break api.md §4.1 as well.
             var token = ReadBearer(authorization);
 
-            var result = ShortLink.IsWellFormedCode(code)
-                ? await useCase.ExecuteAsync(code, token, ct)
-                : new DeleteResult(DeleteOutcome.Refused);
+            // The well-formedness guard moved into the use case (COR-002, ARCH-006), so
+            // every delete outcome is produced by the type that coordinates the operation
+            // and every refusal is logged and counted.
+            var result = await useCase.ExecuteAsync(code, token, ct);
 
             if (result.Outcome == DeleteOutcome.Deleted)
             {
