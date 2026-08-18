@@ -8,7 +8,12 @@ namespace UrlShortener.Api.ShortLinks;
 /// <summary>Transport types live in Entrypoints — <c>layers.md</c> §3.5.</summary>
 public sealed record CreateShortLinkRequest(string? Destination);
 
-public sealed record CreateShortLinkResponse(string Code, string Destination, string ShortUrl);
+/// <summary>
+/// The only type in the system that ever carries a token, and only on a 201. Additive
+/// within the version per <c>api.md</c> §3.1.
+/// </summary>
+public sealed record CreateShortLinkResponse(
+    string Code, string Destination, string ShortUrl, string ManagementToken);
 
 public static class ShortLinkEndpoints
 {
@@ -28,9 +33,15 @@ public static class ShortLinkEndpoints
             {
                 case CreateOutcome.Created:
                     var url = $"{http.Request.Scheme}://{http.Request.Host}/{result.Code}";
+
+                    // ADR-002 -- the one response carrying a plaintext secret must not be
+                    // cached by an intermediary.
+                    http.Response.Headers.CacheControl = "no-store";
+
                     return Results.Created(
                         url,
-                        new CreateShortLinkResponse(result.Code!, request.Destination!, url));
+                        new CreateShortLinkResponse(
+                            result.Code!, request.Destination!, url, result.ManagementToken!));
 
                 case CreateOutcome.DestinationRefused:
                     var problem = DestinationProblem.From(result.Refusal, traceId);

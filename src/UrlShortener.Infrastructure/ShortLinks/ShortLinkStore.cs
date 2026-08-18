@@ -19,6 +19,11 @@ public sealed class ShortLinkDbContext(DbContextOptions<ShortLinkDbContext> opti
         link.Property(l => l.Destination).HasMaxLength(2048).IsRequired();
         link.Property(l => l.CreatedAt).IsRequired();
 
+        // Nullable per data.md §4.2 — rows predating the token have none, and a
+        // non-nullable column without a default is not safe to add. 32 bytes, not a string:
+        // a string hash compared under a case-insensitive collation halves the alphabet.
+        link.Property(l => l.TokenHash).HasMaxLength(32);
+
         // architecture/data.md §1.5 — uniqueness is enforced here, not by a prior read.
         link.HasIndex(l => l.Code).IsUnique();
     }

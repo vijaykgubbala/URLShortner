@@ -16,7 +16,12 @@ public interface IShortLinkRepository
 
 public enum CreateOutcome { Created, DestinationRefused, CodeExhausted }
 
-public sealed record CreateResult(CreateOutcome Outcome, string? Code, DestinationRefusal Refusal);
+/// <summary>
+/// <c>ManagementToken</c> is the plaintext, present only on a Created outcome and only in
+/// memory. It is never persisted -- only its hash is -- and never logged.
+/// </summary>
+public sealed record CreateResult(
+    CreateOutcome Outcome, string? Code, DestinationRefusal Refusal, string? ManagementToken = null);
 
 public enum ResolveOutcome { Found, NotFound, NoLongerPermitted }
 
@@ -26,6 +31,7 @@ public sealed record ResolveResult(ResolveOutcome Outcome, string? Destination);
 public sealed class CreateShortLink(
     IShortLinkRepository repository,
     IShortCodeGenerator codes,
+    ILinkTokenGenerator tokens,
     ValidateDestination validator,
     TimeProvider clock,
     ILogger<CreateShortLink>? logger = null,
@@ -53,13 +59,20 @@ public sealed class CreateShortLink(
         // and the value later redirected to are different strings.
         var destinationToStore = validation.NormalisedUrl!;
 
+        // One token per link, minted once. It leaves this method in the result and is
+        // never written anywhere but the response -- what the row carries is its hash.
+        var token = tokens.Next();
+        var tokenHash = LinkToken.Hash(token);
+
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            var link = new ShortLink(codes.Next(), destinationToStore, clock.GetUtcNow());
+            var link = new ShortLink(
+                codes.Next(), destinationToStore, clock.GetUtcNow(), tokenHash);
 
             if (await repository.TryAddAsync(link, cancellationToken).ConfigureAwait(false))
             {
-                return new CreateResult(CreateOutcome.Created, link.Code, DestinationRefusal.None);
+                return new CreateResult(
+                    CreateOutcome.Created, link.Code, DestinationRefusal.None, token);
             }
         }
 

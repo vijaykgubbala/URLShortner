@@ -48,11 +48,12 @@ public sealed class ShortLink
 
     private ShortLink() { }   // EF Core
 
-    public ShortLink(string code, string destination, DateTimeOffset createdAt)
+    public ShortLink(string code, string destination, DateTimeOffset createdAt, byte[]? tokenHash)
     {
         Code = code;
         Destination = destination;
         CreatedAt = createdAt;
+        TokenHash = tokenHash;
     }
 
     public string Code { get; private set; } = string.Empty;
@@ -61,4 +62,20 @@ public sealed class ShortLink
 
     /// <summary>UTC, per <c>architecture/data.md</c> §1.6.</summary>
     public DateTimeOffset CreatedAt { get; private set; }
+
+    /// <summary>
+    /// SHA-256 of the management token. **Nullable, and it must stay nullable** — rows
+    /// created before this feature have no token, and `data.md` §4.2 names adding a
+    /// non-nullable column without a default as unsafe to apply while the previous version
+    /// is still running.
+    ///
+    /// A null hash means no one can mutate the link: <see cref="LinkToken.Verify"/> fails
+    /// closed rather than admitting everyone.
+    ///
+    /// Stored as bytes, never as a string. A string hash compared in a SQL predicate is
+    /// matched under the server's collation — case-insensitive by default on SQL Server —
+    /// which silently halves the alphabet. Comparison happens in Domain, never in a query.
+    /// Same root cause as review finding COR-007 on #19.
+    /// </summary>
+    public byte[]? TokenHash { get; private set; }
 }

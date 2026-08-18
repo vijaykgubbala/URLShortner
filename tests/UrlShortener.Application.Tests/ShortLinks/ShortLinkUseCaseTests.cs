@@ -38,6 +38,15 @@ public class ShortLinkUseCaseTests
         public void Seed(ShortLink link) => _links[link.Code] = link;
     }
 
+    /// <summary>A fixed token, so a test can assert what the create returned.</summary>
+    private sealed class FixedTokenGenerator(string token) : ILinkTokenGenerator
+    {
+        public static readonly string Token =
+            System.Buffers.Text.Base64Url.EncodeToString(Enumerable.Repeat((byte)0x11, 32).ToArray());
+
+        public string Next() => token;
+    }
+
     /// <summary>Hands out a fixed sequence, so a collision can be forced exactly.</summary>
     private sealed class ScriptedGenerator(params string[] codes) : IShortCodeGenerator
     {
@@ -74,14 +83,15 @@ public class ShortLinkUseCaseTests
         IShortCodeGenerator codes,
         CreateFailureCounter? counter = null,
         ILogger<CreateShortLink>? logger = null) =>
-        new(repository, codes, new ValidateDestination(new PermittingResolver()),
+        new(repository, codes, new FixedTokenGenerator(FixedTokenGenerator.Token),
+            new ValidateDestination(new PermittingResolver()),
             TimeProvider.System, logger, counter);
 
     [Fact]
     public async Task A_colliding_code_is_retried_rather_than_returned_as_a_failure()
     {
         var repository = new FakeRepository();
-        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow));
+        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow, null));
 
         var result = await Creator(repository, new ScriptedGenerator("TAKEN01", "FREE001"))
             .ExecuteAsync("https://example.com/second", CancellationToken.None);
@@ -95,7 +105,7 @@ public class ShortLinkUseCaseTests
     public async Task Exhausting_the_retry_budget_reports_failure_and_increments_the_counter()
     {
         var repository = new FakeRepository();
-        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow));
+        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow, null));
         var counter = new CreateFailureCounter();
 
         var result = await Creator(repository, new ScriptedGenerator("TAKEN01"), counter)
@@ -111,7 +121,7 @@ public class ShortLinkUseCaseTests
     public async Task Exhausting_the_retry_budget_emits_link_create_failed()
     {
         var repository = new FakeRepository();
-        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow));
+        repository.Seed(new ShortLink("TAKEN01", "https://example.com/first", DateTimeOffset.UtcNow, null));
         var logger = new RecordingLogger<CreateShortLink>();
 
         await Creator(repository, new ScriptedGenerator("TAKEN01"), logger: logger)
@@ -162,7 +172,7 @@ public class ShortLinkUseCaseTests
     public async Task A_stored_destination_the_policy_now_refuses_is_not_handed_back()
     {
         var repository = new FakeRepository();
-        repository.Seed(new ShortLink("LEGACY1", "file:///etc/passwd", DateTimeOffset.UtcNow));
+        repository.Seed(new ShortLink("LEGACY1", "file:///etc/passwd", DateTimeOffset.UtcNow, null));
         var logger = new RecordingLogger<ResolveShortLink>();
         var counter = new ResolveFailureCounter();
 
@@ -182,7 +192,7 @@ public class ShortLinkUseCaseTests
     public async Task A_successful_resolve_emits_no_failure_event_and_moves_no_counter()
     {
         var repository = new FakeRepository();
-        repository.Seed(new ShortLink("GOOD001", "https://example.com/ok", DateTimeOffset.UtcNow));
+        repository.Seed(new ShortLink("GOOD001", "https://example.com/ok", DateTimeOffset.UtcNow, null));
         var logger = new RecordingLogger<ResolveShortLink>();
         var counter = new ResolveFailureCounter();
 

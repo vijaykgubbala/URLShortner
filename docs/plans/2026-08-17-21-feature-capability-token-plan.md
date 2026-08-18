@@ -204,22 +204,22 @@ Tests precede the code they verify. Every step names the test it satisfies.
 
 ### Persistence — the column
 
-- [ ] **8.** Write T-06 and T-07 at the endpoint level. Observe red.
-- [ ] **9.** Add `TokenHash` to `ShortLink` as `byte[]?`, mapped **nullable** in `OnModelCreating` per `data.md` §4.2, stored as `byte[]` and never compared in a query predicate (COR-007). Add the constructor parameter as **required** — an optional default silently creates links with no credential. *(T-06, T-07)*
-- [ ] **10.** Update all **nine** `new ShortLink(...)` call sites. One is target-typed (`new(code, destination, ...)` in `ShortLinkStoreTests.cs:58`) and a grep for `new ShortLink(` misses it. *(compile)*
-- [ ] **11.** Update the literal DDL in `ShortLinkStoreTests.cs:117` to include the new column. Without this the NOT NULL test still passes but for the wrong reason — "no such column" instead of the constraint it claims to assert. *(existing test integrity)*
+- [x] **8.** Write T-06 and T-07 at the endpoint level. Observe red.
+- [x] **9.** Add `TokenHash` to `ShortLink` as `byte[]?`, mapped **nullable** in `OnModelCreating` per `data.md` §4.2, stored as `byte[]` and never compared in a query predicate (COR-007). Add the constructor parameter as **required** — an optional default silently creates links with no credential. *(T-06, T-07)*
+- [x] **10.** Update all **nine** `new ShortLink(...)` call sites. One is target-typed (`new(code, destination, ...)` in `ShortLinkStoreTests.cs:58`) and a grep for `new ShortLink(` misses it. *(compile)*
+- [x] **11.** Update the literal DDL in `ShortLinkStoreTests.cs:117` to include the new column. Without this the NOT NULL test still passes but for the wrong reason — "no such column" instead of the constraint it claims to assert. *(existing test integrity)*
 - [ ] **12.** Add `TryDeleteAsync(string code, CancellationToken)` to `IShortLinkRepository`, returning whether a row was removed. Implement with `ExecuteDeleteAsync` — one round trip, and the database decides, matching `TryAddAsync`. Update `FakeRepository` in the Application tests, which will not compile otherwise. *(T-07)*
 
 ### Application — the use case
 
 - [ ] **13.** Write T-08, T-09, T-10, T-16, T-17. Observe red.
 - [ ] **14.** Add `DeleteShortLink` to Application with `DeleteOutcome` and `DeleteResult`, following the `ResolveShortLink` shape: primary-constructor DI, optional logger and counter last. It finds the link with `AsNoTracking`, calls `LinkToken.Verify`, and deletes only on success. Returns its own types per `layers.md` §5.2. *(T-07, T-08, T-09, T-10)*
-- [ ] **15.** Thread the plaintext token through `CreateResult` so the endpoint can return it once. It is never persisted and never logged. *(T-06, T-16)*
+- [x] **15.** Thread the plaintext token through `CreateResult` so the endpoint can return it once. It is never persisted and never logged. *(T-06, T-16)*
 
 ### Entrypoints — the endpoint
 
 - [ ] **16.** Write T-11, T-12, T-13, T-15. Observe red.
-- [ ] **17.** Add `ManagementToken` to `CreateShortLinkResponse` — an additive response field, permitted within the version by `api.md` §3.1. Set `Cache-Control: no-store` on the create response. *(T-06, T-13)*
+- [x] **17.** Add `ManagementToken` to `CreateShortLinkResponse` — an additive response field, permitted within the version by `api.md` §3.1. Set `Cache-Control: no-store` on the create response. *(T-06, T-13)*
 - [ ] **18.** Add `MapDelete($"/v1/short-links/{{code:length({ShortLink.CodeLength})}}", ...)` with `[FromHeader(Name = "Authorization")] string? authorization`. **Nullable is required** — see Decisions. Guard with `ShortLink.IsWellFormedCode` for the alphabet half. Return `204` on success and an identical `404` with `no-store` for every failure. Register `DeleteShortLink` as scoped. *(T-07 … T-12)*
 
 ### Structural proof

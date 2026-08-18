@@ -87,6 +87,67 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
         Assert.Equal(7, body!.Code.Length);
     }
 
+    /// <summary>T-06 — AC-1. The token exists exactly once, here.</summary>
+    [Fact]
+    public async Task Creating_a_link_returns_a_management_token()
+    {
+        var response = await NoRedirect(_host).PostAsJsonAsync(
+            "/v1/short-links", new { destination = "https://example.com/tokened" });
+
+        var body = await response.Content.ReadFromJsonAsync<CreateShortLinkResponse>();
+
+        Assert.NotNull(body!.ManagementToken);
+        Assert.Equal(43, body.ManagementToken.Length);
+    }
+
+    /// <summary>Two links get two tokens — a shared token would authorize the wrong link.</summary>
+    [Fact]
+    public async Task Two_links_receive_different_tokens()
+    {
+        var client = NoRedirect(_host);
+
+        var first = await client.PostAsJsonAsync("/v1/short-links", new { destination = "https://example.com/t1" });
+        var second = await client.PostAsJsonAsync("/v1/short-links", new { destination = "https://example.com/t2" });
+
+        var a = (await first.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!.ManagementToken;
+        var b = (await second.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!.ManagementToken;
+
+        Assert.NotEqual(a, b);
+    }
+
+    /// <summary>
+    /// T-13 — ADR-002. This is the one response in the system carrying a plaintext secret,
+    /// so it is the one most damaging for an intermediary to cache.
+    /// </summary>
+    [Fact]
+    public async Task The_create_response_is_not_cacheable()
+    {
+        var response = await NoRedirect(_host).PostAsJsonAsync(
+            "/v1/short-links", new { destination = "https://example.com/nostore" });
+
+        Assert.True(response.Headers.CacheControl?.NoStore, "create response must set no-store");
+    }
+
+    /// <summary>
+    /// AC-4, at the persistence boundary: what is stored is the hash, never the token.
+    /// </summary>
+    [Fact]
+    public async Task The_plaintext_token_is_never_persisted()
+    {
+        var response = await NoRedirect(_host).PostAsJsonAsync(
+            "/v1/short-links", new { destination = "https://example.com/hashed" });
+
+        var body = (await response.Content.ReadFromJsonAsync<CreateShortLinkResponse>())!;
+
+        using var scope = _host.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ShortLinkDbContext>();
+        var stored = db.ShortLinks.Single(l => l.Code == body.Code);
+
+        Assert.NotNull(stored.TokenHash);
+        Assert.Equal(32, stored.TokenHash!.Length);
+        Assert.Equal(LinkToken.Hash(body.ManagementToken), stored.TokenHash);
+    }
+
     [Fact]
     public async Task A_refused_destination_is_not_stored()
     {
@@ -262,7 +323,7 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
         using (var scope = _host.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ShortLinkDbContext>();
-            db.ShortLinks.Add(new ShortLink("LEGACY1", "ftp://example.com/file", DateTimeOffset.UtcNow));
+            db.ShortLinks.Add(new ShortLink("LEGACY1", "ftp://example.com/file", DateTimeOffset.UtcNow, null));
             await db.SaveChangesAsync();
         }
 
@@ -281,7 +342,7 @@ public class ShortLinkEndpointTests : IClassFixture<ShortLinkEndpointTests.Host>
         using (var scope = _host.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ShortLinkDbContext>();
-            db.ShortLinks.Add(new ShortLink("LEGACY2", "file:///etc/passwd", DateTimeOffset.UtcNow));
+            db.ShortLinks.Add(new ShortLink("LEGACY2", "file:///etc/passwd", DateTimeOffset.UtcNow, null));
             await db.SaveChangesAsync();
         }
 

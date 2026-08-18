@@ -54,8 +54,9 @@ public class ShortLinkStoreTests : IDisposable
     /// </summary>
     private EfShortLinkRepository NewRepository() => new(NewContext());
 
-    private static ShortLink Link(string code, string destination = "https://example.com/x") =>
-        new(code, destination, DateTimeOffset.UtcNow);
+    private static ShortLink Link(
+        string code, string destination = "https://example.com/x", byte[]? tokenHash = null) =>
+        new(code, destination, DateTimeOffset.UtcNow, tokenHash);
 
     [Fact]
     public async Task A_duplicate_code_returns_false_rather_than_throwing()
@@ -114,7 +115,10 @@ public class ShortLinkStoreTests : IDisposable
     public async Task A_non_uniqueness_persistence_fault_is_not_reported_as_a_collision()
     {
         await using var command = _connection.CreateCommand();
-        command.CommandText = "DROP TABLE ShortLinks; CREATE TABLE ShortLinks (Code TEXT NOT NULL CONSTRAINT PK_ShortLinks PRIMARY KEY, Destination TEXT NOT NULL, CreatedAt TEXT NOT NULL, Extra TEXT NOT NULL);";
+        // TokenHash must appear here too. Without it the insert below fails with
+        // "no such column" -- SQLITE_ERROR, not SQLITE_CONSTRAINT_NOTNULL -- and this test
+        // still passes while proving something other than what its summary claims.
+        command.CommandText = "DROP TABLE ShortLinks; CREATE TABLE ShortLinks (Code TEXT NOT NULL CONSTRAINT PK_ShortLinks PRIMARY KEY, Destination TEXT NOT NULL, CreatedAt TEXT NOT NULL, TokenHash BLOB NULL, Extra TEXT NOT NULL);";
         await command.ExecuteNonQueryAsync();
 
         var repository = NewRepository();
