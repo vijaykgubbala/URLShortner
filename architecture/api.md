@@ -52,6 +52,10 @@ A single resource is addressed as `/v1/<resource>/{id}`. The identifier in the p
 
 `200` for a successful read or replace, `201` with a `Location` header for a successful create, `204` for a successful delete, `400` for a malformed request, `401` for a missing or invalid credential, `403` for an authenticated caller without permission, `404` for an absent resource, `409` for a conflict with current state, `422` for a well-formed request that violates a domain rule.
 
+**Exception — a resource whose authorization is a capability token.** Where possession of a secret is itself the authorization and there is no authenticated principal, an unknown identifier, a wrong credential and a missing credential all return an identical `404` with an identical body. Distinguishing them tells a caller which identifiers exist, which returns the guessability that an unguessable identifier was generated to remove. RFC 9110 §15.5.4 permits this — *"An origin server that wishes to 'hide' the current existence of a forbidden target resource MAY instead respond with a status code of 404 (Not Found)"* — and §15.5.5 defines `404` as covering a server that "is not willing to disclose" the resource exists.
+
+This exception carries two obligations, because a `404` is not a drop-in replacement for a `403`. Every such `404` must set `Cache-Control: no-store`, since `404` is heuristically cacheable and `403` is not, and an intermediary may otherwise serve a cached authorization failure to the legitimate holder. And the verification path must perform the same work whether or not the resource exists — a response that returns early when it does not exist leaks through timing what the status code conceals. See [`ADR-002`](../decisions/ADR-002-uniform-404-for-capability-token-failures.md).
+
 ### 2.7 Collection responses
 
 Every endpoint returning a collection is paginated with an enforced maximum page size and returns the page size and a continuation mechanism in the response body. An unbounded collection endpoint must not be added.
